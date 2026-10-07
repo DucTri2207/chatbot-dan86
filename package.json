@@ -1,0 +1,12 @@
+{
+  "name": "chatbot-dan86",
+  "version": "1.0.0",
+  "description": "Bot tự động trả lời bình luận và nhắn tin Messenger cho Fanpage Dan86Farm",
+  "main": "api/webhook.js",
+  "scripts": {
+    "start": "node api/webhook.js"
+  },
+  "keywords": ["facebook-bot", "dan86", "vercel", "webhook"],
+  "author": "DAN86 - CTY TNHH Bá Lộc Green",
+  "license": "ISC"
+}
