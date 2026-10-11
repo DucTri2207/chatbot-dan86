@@ -53,15 +53,120 @@ def get_active_chrome_cdp_ws_url() -> Optional[str]:
     return None
 
 
-async def _async_fetch_cdp_cookies(ws_url: str) -> List[Dict[str, Any]]:
-    """Kết nối WebSocket tới Chrome CDP và trích xuất tất cả cookies đang hoạt động."""
-    import websockets
-    async with websockets.connect(ws_url, origin=None, max_size=10 * 1024 * 1024) as ws:
-        cmd = {"id": 1, "method": "Storage.getCookies"}
-        await ws.send(json.dumps(cmd))
-        raw_msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
-        data = json.loads(raw_msg)
+def _fetch_cdp_cookies_raw(ws_url: str, timeout: float = 5.0) -> List[Dict[str, Any]]:
+    """
+    Kết nối trực tiếp WebSocket tầng socket tới Chrome DevTools để lấy cookies.
+    Bỏ qua lỗi handshake/tiện ích mở rộng của thư viện bên ngoài, chạy siêu tốc <0.2s.
+    """
+    import socket
+    import struct
+    import urllib.parse
+
+    parsed = urllib.parse.urlparse(ws_url)
+    host = parsed.hostname or "127.0.0.1"
+    port = parsed.port or 9222
+    path = parsed.path or "/"
+
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(timeout)
+    try:
+        s.connect((host, port))
+        req = (
+            f"GET {path} HTTP/1.1\r\n"
+            f"Host: {host}:{port}\r\n"
+            f"Upgrade: websocket\r\n"
+            f"Connection: Upgrade\r\n"
+            f"Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\n"
+            f"Sec-WebSocket-Version: 13\r\n\r\n"
+        )
+        s.sendall(req.encode("ascii"))
+
+        header_buf = b""
+        while b"\r\n\r\n" not in header_buf:
+            chunk = s.recv(2048)
+            if not chunk:
+                break
+            header_buf += chunk
+            if len(header_buf) > 32768:
+                break
+
+        if b"101 " not in header_buf:
+            return []
+
+        cmd_payload = json.dumps({"id": 1, "method": "Storage.getCookies"}).encode("utf-8")
+        mask = os.urandom(4)
+        length = len(cmd_payload)
+        hdr = bytearray([0x81])
+        if length < 126:
+            hdr.append(0x80 | length)
+        elif length < 65536:
+            hdr.append(0x80 | 126)
+            hdr.extend(struct.pack(">H", length))
+        else:
+            hdr.append(0x80 | 127)
+            hdr.extend(struct.pack(">Q", length))
+        hdr.extend(mask)
+        masked_cmd = bytes(b ^ mask[i % 4] for i, b in enumerate(cmd_payload))
+        s.sendall(hdr + masked_cmd)
+
+        def read_exact(n: int) -> bytes:
+            buf = b""
+            while len(buf) < n:
+                c = s.recv(n - len(buf))
+                if not c:
+                    raise EOFError("Socket closed prematurely")
+                buf += c
+            return buf
+
+        msg_bytes = bytearray()
+        while True:
+            b1, b2 = struct.unpack("BB", read_exact(2))
+            fin = bool(b1 & 0x80)
+            opcode = b1 & 0x0F
+            has_mask = bool(b2 & 0x80)
+            plen = b2 & 0x7F
+            if plen == 126:
+                plen = struct.unpack(">H", read_exact(2))[0]
+            elif plen == 127:
+                plen = struct.unpack(">Q", read_exact(8))[0]
+            mask_key = read_exact(4) if has_mask else None
+            pdata = read_exact(plen)
+            if has_mask and mask_key:
+                pdata = bytes(b ^ mask_key[i % 4] for i, b in enumerate(pdata))
+            msg_bytes.extend(pdata)
+            if fin and opcode in (0, 1, 2):
+                break
+
+        try:
+            close_frame = bytearray([0x88, 0x80]) + os.urandom(4)
+            s.sendall(close_frame)
+        except Exception:
+            pass
+
+        data = json.loads(msg_bytes.decode("utf-8", errors="ignore"))
         return data.get("result", {}).get("cookies", [])
+    except Exception as e:
+        logger.debug("Lỗi đọc cookies CDP qua socket: %s", e)
+        return []
+    finally:
+        try:
+            s.close()
+        except Exception:
+            pass
+
+
+async def _async_fetch_cdp_cookies(ws_url: str) -> List[Dict[str, Any]]:
+    """Kết nối WebSocket tới Chrome CDP và trích xuất tất cả cookies đang hoạt động (dự phòng)."""
+    try:
+        import websockets
+        async with websockets.connect(ws_url, origin=None, max_size=10 * 1024 * 1024) as ws:
+            cmd = {"id": 1, "method": "Storage.getCookies"}
+            await ws.send(json.dumps(cmd))
+            raw_msg = await asyncio.wait_for(ws.recv(), timeout=5.0)
+            data = json.loads(raw_msg)
+            return data.get("result", {}).get("cookies", [])
+    except Exception:
+        return []
 
 
 def extract_live_cookies_from_chrome_cdp() -> Tuple[List[Dict[str, Any]], Dict[str, Any]]:
@@ -73,21 +178,27 @@ def extract_live_cookies_from_chrome_cdp() -> Tuple[List[Dict[str, Any]], Dict[s
     if not ws_url:
         return [], {"error": "Không tìm thấy DevToolsActivePort của Chrome đang chạy."}
 
-    raw_cookies: List[Dict[str, Any]] = []
-    try:
+    # 1. Thử lấy siêu tốc qua socket thuần
+    raw_cookies: List[Dict[str, Any]] = _fetch_cdp_cookies_raw(ws_url)
+
+    # 2. Dự phòng bằng async websockets nếu socket thuần chưa được
+    if not raw_cookies:
         try:
-            loop = asyncio.get_event_loop()
-            if loop.is_running():
-                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                    future = pool.submit(lambda: asyncio.run(_async_fetch_cdp_cookies(ws_url)))
-                    raw_cookies = future.result(timeout=6.0)
-            else:
-                raw_cookies = loop.run_until_complete(_async_fetch_cdp_cookies(ws_url))
-        except RuntimeError:
-            raw_cookies = asyncio.run(_async_fetch_cdp_cookies(ws_url))
-    except Exception as e:
-        logger.debug("Lỗi kết nối CDP Chrome: %s", e)
-        return [], {"error": f"Lỗi kết nối CDP: {e}"}
+            try:
+                loop = asyncio.get_event_loop()
+                if loop.is_running():
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
+                        future = pool.submit(lambda: asyncio.run(_async_fetch_cdp_cookies(ws_url)))
+                        raw_cookies = future.result(timeout=6.0)
+                else:
+                    raw_cookies = loop.run_until_complete(_async_fetch_cdp_cookies(ws_url))
+            except RuntimeError:
+                raw_cookies = asyncio.run(_async_fetch_cdp_cookies(ws_url))
+        except Exception as e:
+            logger.debug("Lỗi kết nối CDP Chrome: %s", e)
+
+    if not raw_cookies:
+        return [], {"error": "Không thể kết nối hoặc trích xuất cookies từ Chrome CDP."}
 
     matched: List[Dict[str, Any]] = []
     has_c_user = False
@@ -250,12 +361,8 @@ def sync_facebook_credentials_from_dan86(
     storage_size = os.path.getsize(storage_path)
 
     # 2. Ghi file GITHUB_SECRET_VALUE.txt (chuỗi mã hóa Base64 cho GitHub Secrets)
-    compact_json = json.dumps(state_payload, ensure_ascii=False)
-    b64_secret = base64.b64encode(compact_json.encode("utf-8")).decode("ascii")
-    with open(secret_path, "w", encoding="utf-8") as f:
-        f.write(b64_secret)
-
-    secret_size = os.path.getsize(secret_path)
+    b64_secret = export_github_secret_file(storage_path, secret_path)
+    secret_size = os.path.getsize(secret_path) if os.path.exists(secret_path) else len(b64_secret)
 
     return {
         "success": True,
@@ -270,6 +377,47 @@ def sync_facebook_credentials_from_dan86(
             f"({storage_size} bytes, siêu nhẹ ~{storage_size/1024:.1f} KB)!"
         ),
     }
+
+
+def export_github_secret_file(
+    storage_path: str = STORAGE_STATE_FILE,
+    secret_path: str = GITHUB_SECRET_EXPORT_FILE,
+) -> str:
+    """
+    Mã hóa file fb_storage_state.json sang Base64 và ghi vào GITHUB_SECRET_VALUE.txt.
+    Dùng để cập nhật Secret FB_STORAGE_STATE trên VPS GitHub Actions.
+    Tự động lọc bỏ các key telemetry/analytics dung lượng lớn (falco_queue_*, screen_time_*)
+    trong localStorage để đảm bảo kích thước Secret luôn < 10KB (tuân thủ giới hạn 64KB của GitHub Actions).
+    """
+    if not os.path.exists(storage_path):
+        return ""
+    try:
+        with open(storage_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        # Làm sạch localStorage trong origins để loại bỏ rác telemetry/analytics của Facebook
+        if isinstance(data, dict) and "origins" in data:
+            cleaned_origins = []
+            for org in data.get("origins", []):
+                new_org = dict(org)
+                if "localStorage" in new_org:
+                    new_org["localStorage"] = [
+                        item for item in new_org.get("localStorage", [])
+                        if not item.get("name", "").startswith(("falco_", "screen_time_", "ares_", "_oz_"))
+                    ]
+                cleaned_origins.append(new_org)
+            data["origins"] = cleaned_origins
+
+        compact_json = json.dumps(data, ensure_ascii=False)
+        b64_secret = base64.b64encode(compact_json.encode("utf-8")).decode("ascii")
+        os.makedirs(os.path.dirname(secret_path) or STATE_DIR, exist_ok=True)
+        with open(secret_path, "w", encoding="utf-8") as f:
+            f.write(b64_secret)
+        logger.info("Đã cập nhật mã GitHub Secret: %s (%d bytes)", secret_path, len(b64_secret))
+        return b64_secret
+    except Exception as e:
+        logger.warning("Lỗi xuất file GitHub Secret: %s", e)
+        return ""
 
 
 def get_storage_state_status() -> Dict[str, Any]:

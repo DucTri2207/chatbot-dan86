@@ -248,6 +248,15 @@ async def verify_logged_in(page: Page) -> bool:
     if "login" in url:
         return False
 
+    # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
+    try:
+        from bot.auth_helper import export_github_secret_file
+        await page.context.storage_state(path=str(STORAGE_STATE_FILE))
+        export_github_secret_file(str(STORAGE_STATE_FILE))
+        logger.info("Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!")
+    except Exception as e_save:
+        logger.warning("Không thể lưu storage_state sau xác thực: %s", e_save)
+
     return True
 
 
@@ -266,8 +275,6 @@ async def expand_all_comment_replies(page: Page) -> int:
         see_more_selectors = [
             'div[role="button"]:has-text("Xem"):has-text("phản hồi")',
             'span:has-text("Xem"):has-text("phản hồi")',
-            'div[role="button"]:has-text("phản hồi")',
-            'span:has-text("phản hồi")',
             'div[role="button"]:has-text("Xem thêm bình luận")',
             'span:has-text("Xem thêm bình luận")',
             'div[role="button"]:has-text("View"):has-text("repl")',
@@ -279,11 +286,11 @@ async def expand_all_comment_replies(page: Page) -> int:
                 btn = btns.nth(idx)
                 if await btn.is_visible():
                     txt = (await btn.inner_text() or "").strip().lower()
-                    if any(k in txt for k in ["phản hồi", "bình luận", "repl"]):
+                    if any(k in txt for k in ["xem", "view"]):
                         try:
-                            await btn.click()
+                            await btn.click(timeout=1500)
                             expanded_count += 1
-                            await asyncio.sleep(0.8)
+                            await asyncio.sleep(0.5)
                         except Exception:
                             pass
         if expanded_count > 0:
@@ -415,6 +422,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             const contentLines = lines.filter(l => {
                 const low = l.toLowerCase();
                 if (l === authorName || low.includes('tuần') || low.includes('ngày') || low.includes('phút') || low.includes('giờ') || l === '·') return false;
+                if (/^\d+(\s+(?:phản hồi|bình luận|replies|reply))?$/i.test(l.trim())) return false;
                 if (['trả lời', 'reply', 'phản hồi', 'ẩn', 'hide', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'send message', 'thích', 'like', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả'].includes(low)) return false;
                 return true;
             });
@@ -699,6 +707,25 @@ async def send_inbox_via_messenger_search(
         return False
 
 
+async def dismiss_blocking_modals(page: Page) -> None:
+    """Tự động đóng các popup modal / upsell / banner quảng cáo che khuất giao diện."""
+    try:
+        modals = page.locator('[data-surface*="upsell"], div[role="dialog"]')
+        if await modals.count() > 0:
+            await page.keyboard.press("Escape")
+            await asyncio.sleep(0.3)
+            close_btn = page.locator(
+                '[aria-label*="Đóng"], [aria-label*="Close"], '
+                'div[role="button"]:has-text("Đóng"), div[role="button"]:has-text("Xong"), '
+                'button:has-text("Đóng"), button:has-text("Xong")'
+            ).first
+            if await close_btn.count() > 0 and await close_btn.is_visible():
+                await close_btn.click(timeout=1000)
+                await asyncio.sleep(0.3)
+    except Exception:
+        pass
+
+
 async def send_private_inbox_to_commenter(
     page: Page,
     post_url: str = META_INBOX_COMMENTS_URL,
@@ -811,9 +838,10 @@ async def send_private_inbox_to_commenter(
                 close_btn = dialog.locator('[aria-label*="Đóng"], [aria-label*="Close"], button:has-text("Đóng"), button:has-text("Close")').first
                 if await close_btn.count() > 0 and await close_btn.is_visible():
                     try:
-                        await close_btn.click()
+                        await close_btn.click(timeout=1500)
                     except Exception:
                         pass
+                await dismiss_blocking_modals(page)
                 logger.info("Đã gửi tin nhắn riêng cho [%s] qua Popup Modal thành công!", author_name)
                 return True
 
@@ -917,12 +945,17 @@ async def process_facebook_comments_tab(
 
     for i in range(total_items):
         try:
+            await dismiss_blocking_modals(page)
             item = items_locator.nth(i)
             if not await item.is_visible():
                 continue
 
             preview_text = (await item.inner_text() or "").strip()
-            await item.click()
+            try:
+                await item.click(timeout=3000)
+            except Exception:
+                await dismiss_blocking_modals(page)
+                await item.click(timeout=3000)
             await human_sleep(2.0, 3.5)
             current_post_url = page.url
 
@@ -1011,7 +1044,7 @@ async def process_facebook_comments_tab(
                     like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
                     if await like_btn.count() > 0 and await like_btn.is_visible():
                         try:
-                            await like_btn.click()
+                            await like_btn.click(timeout=2000)
                             await human_sleep(0.8, 1.5)
                         except Exception:
                             pass
@@ -1021,7 +1054,7 @@ async def process_facebook_comments_tab(
                 marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
                 if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
                     try:
-                        await marked_reply_btn.click()
+                        await marked_reply_btn.click(timeout=2500)
                         reply_clicked = True
                         await human_sleep(1.2, 2.2)
                     except Exception as e_reply:
@@ -1037,7 +1070,7 @@ async def process_facebook_comments_tab(
                     ).first
                     if await reply_btn.count() > 0 and await reply_btn.is_visible():
                         try:
-                            await reply_btn.click()
+                            await reply_btn.click(timeout=2500)
                             reply_clicked = True
                             await human_sleep(1.2, 2.2)
                         except Exception as e_reply:

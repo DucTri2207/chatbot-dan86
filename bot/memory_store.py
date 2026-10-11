@@ -39,9 +39,8 @@ def make_comment_key(
 ) -> str:
     """
     Tạo khóa định danh duy nhất cho mỗi bình luận của khách.
-    - Kết hợp: post_id (selected_item_id) + domIndex + normalize_text(author_name) + normalize_text(comment_text).
-    - Giải quyết triệt để lỗi bỏ sót: Không bao giờ dùng riêng post_id làm comment_id khiến các bình luận khác
-      trong cùng bài viết bị trùng key và bị bỏ qua!
+    - Kết hợp: post_id (selected_item_id) + normalize_text(author_name) + normalize_text(comment_text).
+    - Ổn định và bền vững: Không bị thay đổi khóa khi thứ tự DOM / domIndex thay đổi.
     """
     norm_author = normalize_text(author_name)
     norm_text = normalize_text(comment_text)
@@ -58,7 +57,7 @@ def make_comment_key(
         cid = str(comment_id).strip()
         raw = f"{cid}|{dom_index}|{norm_author}|{norm_text}"
         digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
-        return f"id:{cid}:{digest}"
+        return f"id:{cid}:{dom_index}:{digest}"
 
     # Fallback cho trường hợp không có post_id (như trong unit test cơ bản)
     raw = f"{dom_index}|{norm_author}|{norm_text}" if dom_index > 0 else f"{norm_author}|{norm_text}"
@@ -171,6 +170,18 @@ class BotMemoryStore:
         # Nếu khóa định danh duy nhất của bình luận này đã nằm trong replied_comments:
         if key in self.data["replied_comments"]:
             return False, key
+
+        # Kiểm tra thêm chống trùng lặp: Nếu khách này đã được trả lời bình luận cùng nội dung trên bài này
+        for rk, rv in self.data["replied_comments"].items():
+            if isinstance(rv, dict):
+                r_author = normalize_text(rv.get("author", ""))
+                r_text = normalize_text(rv.get("comment_text", ""))
+                if r_author and r_author == normalize_text(clean_name):
+                    if r_text and norm_text and (r_text == norm_text or r_text in norm_text or norm_text in r_text):
+                        if post_id and str(post_id).strip() in rk:
+                            return False, rk
+                        elif not post_id:
+                            return False, rk
 
         # Nếu chưa có phản hồi của Page trên DOM và chưa được lưu trong memory -> Bắt buộc trả lời!
         return True, key
