@@ -223,6 +223,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Xin chào Quỳnh Hương! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\nShop xin gửi thông tin để bạn dễ tham khảo:\n✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\nDạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!",
       "replied_at": 1791727648.3597794
+    },
+    "cmt:693996463152389:5:97cf7de425dce1d8": {
+      "author": "Huỳnh Anh",
+      "comment_text": "1 năm Cho mình xin giá nha shop",
+      "public_reply": "Dạ chào Huỳnh Anh! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Cần hỗ trợ gấp bạn liên hệ Hotline/Zalo: 0933 133 516 nhé! 🌾",
+      "private_inbox_sent": true,
+      "private_reply_text": "Chào Huỳnh Anh, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
+      "replied_at": 1791728381.29282
     }
   },
   "conversations": {
@@ -232,7 +240,7 @@
       "last_replied_customer_msg": "1 năm ib",
       "last_bot_reply_ts": 1791711591.0058415,
       "source": "comment_private_reply",
-      "last_interaction_ts": 1791728242.6802223
+      "last_interaction_ts": 1791728450.521867
     },
     "name:diệu linh": {
       "customer_name": "Diệu Linh",
@@ -324,11 +332,18 @@
       "last_replied_customer_msg": "1 năm hóng quá shop",
       "last_bot_reply_ts": 1791727648.3597794,
       "source": "comment_private_reply"
+    },
+    "name:huỳnh anh": {
+      "customer_name": "Huỳnh Anh",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm cho mình xin giá nha shop",
+      "last_bot_reply_ts": 1791728381.29282,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 27,
-    "private_inboxes_from_comment": 14,
+    "comments_replied": 28,
+    "private_inboxes_from_comment": 15,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
