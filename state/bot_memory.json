@@ -1367,6 +1367,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Dạ chào Mộc Thiên Hương ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
       "replied_at": 1791740954.4778006
+    },
+    "cmt:693576193194416:3:64a40d872c4f5250": {
+      "author": "Vương Bích Nga",
+      "comment_text": "1 năm Ib mình báo giá mình nha",
+      "public_reply": "Dạ chào Vương Bích Nga! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Cần hỗ trợ gấp bạn liên hệ Hotline/Zalo: 0933 133 516 nhé! 🌾",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ DAN86 chào Vương Bích Nga nhé! Shop thấy mình vừa bình luận trên bài viết của trang nên nhắn tin hỗ trợ mình ngay ạ. ❤️\nCác set quà bên em đều được làm thủ công tỉ mỉ từ mây tre đan, cỏ bàng kết hợp đặc sản thuần Việt, nhận thiết kế riêng và in logo theo yêu cầu.\n🌐 Mời bạn xem mẫu & bảng giá tại: https://dan86.vn\n📞 Hotline / Zalo: 0933 133 516\nDạ mình dự định đặt số lượng khoảng bao nhiêu set để bên em báo giá tốt nhất cho mình ạ?",
+      "replied_at": 1791741124.5571277
     }
   },
   "conversations": {
@@ -2421,11 +2429,18 @@
       "last_replied_customer_msg": "1 năm ib",
       "last_bot_reply_ts": 1791740954.4778006,
       "source": "comment_private_reply"
+    },
+    "name:vương bích nga": {
+      "customer_name": "Vương Bích Nga",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm ib mình báo giá mình nha",
+      "last_bot_reply_ts": 1791741124.5571277,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 170,
-    "private_inboxes_from_comment": 152,
+    "comments_replied": 171,
+    "private_inboxes_from_comment": 153,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
