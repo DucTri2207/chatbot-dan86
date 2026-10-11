@@ -31,12 +31,28 @@
       "private_inbox_sent": false,
       "private_reply_text": "Dạ shop chào Diễm Myy ạ! Cảm ơn bạn đã bình luận quan tâm đến Quà tặng thuần Việt DAN86 (CTY TNHH Bá Lộc Green). 🌾\nHiện shop đang có sẵn nhiều mẫu set quà tặng tinh tế kết hợp đặc sản và thủ công truyền thống:\n- Hộp quà mây tre đan, túi cỏ bàng, khăn rằn dệt tay.\n- Nông sản rang mộc, trà thảo mộc hữu cơ, mật ong rừng, tinh dầu thiên nhiên.\n🌐 Chi tiết sản phẩm: https://dan86.vn | 📞 Zalo/Hotline: 0933 133 516\nBạn đang cần tìm quà tặng cho cá nhân hay cho đoàn/doanh nghiệp để shop hỗ trợ mình ngay nhé!",
       "replied_at": 1791710955.415084
+    },
+    "id:824954333389934": {
+      "author": "Đức Trí",
+      "comment_text": "1 năm Ib",
+      "public_reply": "Dạ chào Đức Trí, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger để shop tư vấn chi tiết set quà phù hợp nhất nhé! 🌿",
+      "private_inbox_sent": true,
+      "private_reply_text": "Xin chào Đức Trí! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\nShop xin gửi thông tin để bạn dễ tham khảo:\n✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\nDạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!",
+      "replied_at": 1791711591.0058415
     }
   },
-  "conversations": {},
+  "conversations": {
+    "name:đức trí": {
+      "customer_name": "Đức Trí",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm ib",
+      "last_bot_reply_ts": 1791711591.0058415,
+      "source": "comment_private_reply"
+    }
+  },
   "stats": {
-    "comments_replied": 4,
-    "private_inboxes_from_comment": 0,
+    "comments_replied": 5,
+    "private_inboxes_from_comment": 1,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
