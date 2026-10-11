@@ -127,9 +127,9 @@ def fetch_github_live_data(force: bool = False) -> Dict[str, Any]:
 
     _GITHUB_CACHE["cached_at"] = now
 
-    # Lưu lại memory mới nhất vào ổ đĩa local nếu VPS có dữ liệu
+    # Lưu lại memory từ VPS vào ổ đĩa local nếu máy chưa có dữ liệu
     vps_mem = _GITHUB_CACHE.get("vps_memory")
-    if isinstance(vps_mem, dict) and (vps_mem.get("conversations") or vps_mem.get("replied_comments")):
+    if not os.path.exists(MEMORY_FILE) and isinstance(vps_mem, dict) and (vps_mem.get("conversations") or vps_mem.get("replied_comments")):
         try:
             os.makedirs(STATE_DIR, exist_ok=True)
             with open(MEMORY_FILE, "w", encoding="utf-8") as f:

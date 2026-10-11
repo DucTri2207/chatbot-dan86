@@ -19,7 +19,7 @@ from bot.bot_config import (
     clean_customer_name,
     pick_template,
 )
-from bot.memory_store import BotMemoryStore
+from bot.memory_store import BotMemoryStore, make_comment_key
 
 
 class TestDan86BotLogic(unittest.TestCase):
@@ -330,6 +330,82 @@ class TestDan86BotLogic(unittest.TestCase):
             )
             self.assertTrue(should_rep, f"Bình luận '{text}' của '{author}' không được bị bỏ qua!")
             self.assertTrue(key.startswith(f"cmt:{post_id}:{idx}:"))
+
+    def test_07_multiple_candidates_scan_does_not_abort_on_skipped_comment(self) -> None:
+        """
+        Kiểm tra xử lý danh sách unreplied_candidates trên cùng 1 bài viết:
+        - Candidate 0: Đã được rep trước đó (hoặc dính label hệ thống).
+        - Candidate 1: Khách B mới bình luận.
+        - Candidate 2: Khách C mới bình luận.
+        Vòng lặp bot PHẢI bỏ qua Candidate 0 và tiếp tục chọn Candidate 1 và 2 để trả lời,
+        tuyệt đối không được break sớm làm bỏ sót (miss) các bình luận còn lại!
+        """
+        post_id = "999888777666"
+        
+        # Đánh dấu Candidate 0 đã rep trong memory
+        key0 = make_comment_key("Khách A", "Báo giá em với", post_id=post_id, dom_index=0)
+        self.memory.mark_comment_replied(
+            comment_key=key0,
+            author_name="Khách A",
+            comment_text="Báo giá em với",
+            public_reply="Dạ chào bạn...",
+            private_inbox_sent=True,
+            private_reply_text="Dạ inbox...",
+        )
+        
+        unreplied_candidates = [
+            {"dom_index": 0, "author_name": "Khách A", "comment_text": "Báo giá em với"},
+            {"dom_index": 2, "author_name": "Khách B", "comment_text": "Hộp mây tre còn không?"},
+            {"dom_index": 3, "author_name": "Khách C", "comment_text": "Ib giá sỉ nha shop"},
+        ]
+        
+        # Vòng 1: Candidate 0 bị skip, Candidate 1 phải được chọn
+        selected_cand = None
+        selected_key = None
+        for cand in unreplied_candidates:
+            s_rep, c_key = self.memory.should_reply_comment(
+                author_name=cand["author_name"],
+                comment_text=cand["comment_text"],
+                has_page_reply_in_dom=False,
+                post_id=post_id,
+                dom_index=cand["dom_index"],
+            )
+            if s_rep:
+                selected_cand = cand
+                selected_key = c_key
+                break
+                
+        self.assertIsNotNone(selected_cand, "Phải tìm thấy candidate tiếp theo cần trả lời!")
+        self.assertEqual(selected_cand["author_name"], "Khách B", "Candidate 1 (Khách B) phải được chọn thay vì bị break sớm!")
+        
+        # Bot trả lời Candidate 1
+        self.memory.mark_comment_replied(
+            comment_key=selected_key,
+            author_name="Khách B",
+            comment_text="Hộp mây tre còn không?",
+            public_reply="Dạ chào Khách B...",
+            private_inbox_sent=True,
+            private_reply_text="Dạ shop gửi ảnh...",
+        )
+        
+        # Vòng 2: Cả Candidate 0 và 1 đều đã rep, Candidate 2 phải được chọn
+        selected_cand_2 = None
+        selected_key_2 = None
+        for cand in unreplied_candidates:
+            s_rep, c_key = self.memory.should_reply_comment(
+                author_name=cand["author_name"],
+                comment_text=cand["comment_text"],
+                has_page_reply_in_dom=False,
+                post_id=post_id,
+                dom_index=cand["dom_index"],
+            )
+            if s_rep:
+                selected_cand_2 = cand
+                selected_key_2 = c_key
+                break
+                
+        self.assertIsNotNone(selected_cand_2)
+        self.assertEqual(selected_cand_2["author_name"], "Khách C", "Candidate 2 (Khách C) phải được chọn tiếp tục!")
 
 
 if __name__ == "__main__":
