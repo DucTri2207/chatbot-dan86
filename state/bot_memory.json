@@ -247,6 +247,22 @@
       "private_inbox_sent": true,
       "private_reply_text": "Dạ chào Hà Nguyễn Minh ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
       "replied_at": 1791728630.9516275
+    },
+    "cmt:693996463152389:6:a8ee33c5030ee065": {
+      "author": "Van Nguyen",
+      "comment_text": "1 năm Cho mình xin giá sp này ạ",
+      "public_reply": "Dạ cảm ơn Van Nguyen đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động inbox tư vấn cho mình rồi ạ, bạn vào xem nhé! 🎁",
+      "private_inbox_sent": false,
+      "private_reply_text": "Dạ shop chào Van Nguyen ạ! Cảm ơn bạn đã bình luận quan tâm đến Quà tặng thuần Việt DAN86 (CTY TNHH Bá Lộc Green). 🌾\nHiện shop đang có sẵn nhiều mẫu set quà tặng tinh tế kết hợp đặc sản và thủ công truyền thống:\n- Hộp quà mây tre đan, túi cỏ bàng, khăn rằn dệt tay.\n- Nông sản rang mộc, trà thảo mộc hữu cơ, mật ong rừng, tinh dầu thiên nhiên.\n🌐 Chi tiết sản phẩm: https://dan86.vn | 📞 Zalo/Hotline: 0933 133 516\nBạn đang cần tìm quà tặng cho cá nhân hay cho đoàn/doanh nghiệp để shop hỗ trợ mình ngay nhé!",
+      "replied_at": 1791728816.105936
+    },
+    "cmt:693996463152389:8:4251d9214820395c": {
+      "author": "Minh Hồng",
+      "comment_text": "1 năm Xin giá",
+      "public_reply": "Dạ DAN86 xin chào Minh Hồng! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư giúp shop nhé! 🎋",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Minh Hồng ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791728865.843143
     }
   },
   "conversations": {
@@ -256,7 +272,7 @@
       "last_replied_customer_msg": "1 năm ib",
       "last_bot_reply_ts": 1791711591.0058415,
       "source": "comment_private_reply",
-      "last_interaction_ts": 1791728700.4886007
+      "last_interaction_ts": 1791728943.9173872
     },
     "name:diệu linh": {
       "customer_name": "Diệu Linh",
@@ -369,11 +385,18 @@
       "last_replied_customer_msg": "1 năm .",
       "last_bot_reply_ts": 1791728630.9516275,
       "source": "comment_private_reply"
+    },
+    "name:minh hồng": {
+      "customer_name": "Minh Hồng",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm xin giá",
+      "last_bot_reply_ts": 1791728865.843143,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 30,
-    "private_inboxes_from_comment": 17,
+    "comments_replied": 32,
+    "private_inboxes_from_comment": 18,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
