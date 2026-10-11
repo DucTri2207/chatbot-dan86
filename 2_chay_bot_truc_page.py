@@ -267,11 +267,39 @@ async def run_bot_loop(
             )
             # Đồng bộ kết thúc ca lên GitHub
             sync_state_to_github_if_vps(logger, force=True)
-            # Lưu lại trạng thái cookies mới nhất nếu phiên vẫn còn giữ quyền đăng nhập (c_user)
+            # Lưu lại trạng thái cookies mới nhất nếu phiên vẫn còn giữ quyền đăng nhập (c_user) và bảo toàn origins
             try:
                 active_cookies = await context.cookies()
                 if any(c.get("name") == "c_user" for c in active_cookies):
+                    preserved_origins = []
+                    if os.path.exists(STORAGE_STATE_FILE):
+                        try:
+                            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_prev:
+                                preserved_origins = json.load(f_prev).get("origins", [])
+                        except Exception:
+                            pass
                     await context.storage_state(path=STORAGE_STATE_FILE)
+                    if preserved_origins:
+                        try:
+                            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_new:
+                                new_data = json.load(f_new)
+                            new_origins_by_dom = {
+                                o.get("origin"): o for o in new_data.get("origins", []) if isinstance(o, dict)
+                            }
+                            for prev_o in preserved_origins:
+                                if isinstance(prev_o, dict):
+                                    dom = prev_o.get("origin")
+                                    if dom and (
+                                        dom not in new_origins_by_dom
+                                        or len(new_origins_by_dom[dom].get("localStorage", []))
+                                        < len(prev_o.get("localStorage", []))
+                                    ):
+                                        new_origins_by_dom[dom] = prev_o
+                            new_data["origins"] = list(new_origins_by_dom.values())
+                            with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f_fix:
+                                json.dump(new_data, f_fix, ensure_ascii=False, indent=2)
+                        except Exception:
+                            pass
             except Exception:
                 pass
             await context.close()

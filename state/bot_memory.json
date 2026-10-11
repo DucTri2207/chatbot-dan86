@@ -199,6 +199,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Chào Thu Nga Tran, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
       "replied_at": 1791727016.6887603
+    },
+    "cmt:723877476830954:1:e4fe58d6bca0e51d": {
+      "author": "Đức Trí",
+      "comment_text": ".",
+      "public_reply": "Dạ cảm ơn Đức Trí đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ, bạn mở tin nhắn xem giúp DAN86 nha! 🌸",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Đức Trí ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791754720.0878124
     }
   },
   "conversations": {
@@ -278,11 +286,27 @@
       "last_replied_customer_msg": "ib mình !",
       "last_bot_reply_ts": 1791727016.6887603,
       "source": "comment_private_reply"
+    },
+    "name:đức trí": {
+      "customer_name": "Đức Trí",
+      "stage": 1,
+      "last_replied_customer_msg": ".",
+      "last_bot_reply_ts": 1791754720.0878124,
+      "source": "comment_private_reply",
+      "last_interaction_ts": 1791754747.1760237
+    },
+    "tid:100007295343728": {
+      "customer_name": "Baochau Haphan",
+      "stage": 1,
+      "last_replied_customer_msg": "dạ",
+      "last_bot_reply_ts": 1791754753.5911517,
+      "last_interaction_ts": 1791754753.5911517,
+      "source": "prior_history"
     }
   },
   "stats": {
-    "comments_replied": 25,
-    "private_inboxes_from_comment": 12,
+    "comments_replied": 26,
+    "private_inboxes_from_comment": 13,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }

@@ -1021,10 +1021,16 @@ async def send_private_inbox_to_commenter(
 
             let target = null;
             if (targetIdx >= 0 && targetIdx < articles.length) {
-                target = articles[targetIdx];
+                const candArt = articles[targetIdx];
+                if (!targetAuthor || targetAuthor === 'bạn' || (candArt.innerText || '').toLowerCase().includes(targetAuthor.toLowerCase())) {
+                    target = candArt;
+                }
             }
             if (!target && targetAuthor && targetAuthor !== 'bạn') {
-                target = articles.find(a => (a.innerText || '').toLowerCase().includes(targetAuthor.toLowerCase()));
+                const matching = articles.filter(a => (a.innerText || '').toLowerCase().includes(targetAuthor.toLowerCase()));
+                if (matching.length > 0) {
+                    target = matching[matching.length - 1];
+                }
             }
             if (!target && articles.length > 0) {
                 target = articles[0];
@@ -1573,6 +1579,8 @@ async def process_messenger_inbox_tab(
         return 0
 
     thread_selectors = [
+        'div[role="presentation"].x1ypdohk',
+        'div._a6ag._a6ah',
         '[role="navigation"] [role="listitem"]',
         '[role="grid"] [role="row"]',
         'div[role="listitem"]',
@@ -1594,11 +1602,15 @@ async def process_messenger_inbox_tab(
 
     for i in range(total_items):
         try:
+            await dismiss_blocking_modals(page)
             item = items_locator.nth(i)
             if not await item.is_visible():
                 continue
 
-            await item.click()
+            try:
+                await item.click(position={"x": 150, "y": 40}, timeout=4000)
+            except Exception:
+                await item.click(timeout=4000)
             await human_sleep(2.0, 3.5)
 
             conv = await inspect_messenger_conversation(page)
