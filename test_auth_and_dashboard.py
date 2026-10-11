@@ -96,6 +96,8 @@ class TestAuthAndDashboard(unittest.TestCase):
         self.assertIn("bot_status", data)
         self.assertIn("storage_state", data)
         self.assertIn("dan86_source", data)
+        self.assertIn("vps_live", data)
+        self.assertIn("is_running", data["vps_live"])
 
 
 if __name__ == "__main__":

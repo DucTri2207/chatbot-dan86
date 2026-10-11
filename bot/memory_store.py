@@ -16,7 +16,6 @@ from typing import Any, Dict, Optional, Tuple
 from bot.bot_config import (
     COMMENT_REPLIES,
     FIRST_INBOX_REPLIES,
-    FOLLOWUP_MIN_SILENCE_SECONDS,
     MEMORY_FILE,
     PRIVATE_REPLIES_FROM_COMMENT,
     SILENCE_REMINDER_MINUTES,
@@ -104,7 +103,15 @@ class BotMemoryStore:
         Kiểm tra xem bình luận này có cần trả lời hay không.
         Trả về (True/False, comment_key).
         """
-        key = make_comment_key(author_name, comment_text, comment_id)
+        from bot.bot_config import SYSTEM_BLACKLIST_STRINGS, clean_customer_name
+        
+        # Nếu tên tác giả bị dính nhãn hệ thống (ví dụ: "Chỉ báo trạng thái online"), tuyệt đối không trả lời
+        low_author = (author_name or "").lower().strip()
+        if any(bad in low_author for bad in SYSTEM_BLACKLIST_STRINGS if bad not in ("bạn", "khách")):
+            return False, ""
+
+        clean_name = clean_customer_name(author_name)
+        key = make_comment_key(clean_name, comment_text, comment_id)
         if not normalize_text(comment_text):
             return False, key
         if has_page_reply_in_dom:
@@ -144,9 +151,11 @@ class BotMemoryStore:
         now_ts: Optional[float] = None,
     ) -> None:
         """Đánh dấu bình luận đã được trả lời và đã gửi inbox riêng."""
+        from bot.bot_config import clean_customer_name
         ts = now_ts if now_ts is not None else time.time()
+        c_name = clean_customer_name(author_name)
         self.data["replied_comments"][comment_key] = {
-            "author": author_name,
+            "author": c_name,
             "comment_text": comment_text,
             "public_reply": public_reply,
             "private_inbox_sent": bool(private_inbox_sent),
@@ -158,12 +167,11 @@ class BotMemoryStore:
             self.data["stats"]["private_inboxes_from_comment"] += 1
 
         # Đồng thời ghi nhận trạng thái hội thoại của khách này ở Stage 1
-        # để nếu khách trả lời lại tin nhắn inbox đó thì Bot tự chuyển sang mẫu "Đợi nhân viên"!
-        if private_inbox_sent and author_name:
-            t_key = make_thread_key(author_name)
+        if private_inbox_sent and c_name:
+            t_key = make_thread_key(c_name)
             if t_key not in self.data["conversations"]:
                 self.data["conversations"][t_key] = {
-                    "customer_name": author_name,
+                    "customer_name": c_name,
                     "stage": 1,
                     "last_replied_customer_msg": normalize_text(comment_text),
                     "last_bot_reply_ts": ts,
@@ -172,7 +180,7 @@ class BotMemoryStore:
         self.save()
 
     # ==========================================================================
-    # XỬ LÝ TIN NHẮN HỘP THƯ (MESSENGER INBOX 3 GIAI ĐOẠN)
+    # XỬ LÝ TIN NHẮN HỘP THƯ (MESSENGER INBOX CHUẨN THƯƠNG MẠI)
     # ==========================================================================
     def decide_inbox_action(
         self,
@@ -184,16 +192,17 @@ class BotMemoryStore:
         now_ts: Optional[float] = None,
     ) -> Tuple[str, str, str]:
         """
-        Quyết định hành động cho cuộc hội thoại Messenger Inbox.
-        Trả về bộ 3 giá trị: (action_type, reply_text, thread_key)
-        Trong đó `action_type` thuộc:
-          - "NONE": Không nhắn gì cả (khi tin cuối là của Page hoặc đang chờ nhân viên).
-          - "FIRST_REPLY": Khách nhắn lần đầu -> Gửi mẫu chào & tư vấn lần 1 (Random).
-          - "WAIT_STAFF_REPLY": Khách nhắn tiếp / im một thời gian rồi nhắn lại -> Gửi mẫu
-                                "Đợi nhân viên sẽ liên hệ lại ngay" (Random).
+        Quyết định hành động cho cuộc hội thoại Messenger Inbox:
+        1. Cứ khi nào khách nhắn lần đầu -> Bot rep DUY NHẤT 1 tin chào & tư vấn,
+           sau đó DỪNG HOÀN TOÀN để nhân viên vào trả lời.
+        2. Kể cả khách nhắn thêm tin thứ 2, thứ 3 ngay sau đó -> Bot vẫn giữ im lặng nhường nhân viên.
+        3. CHỈ KHI NÀO 2 bên im lặng quá lâu tầm 3 tiếng (>= 180 phút) mà khách nhắn lại tin mới,
+           lúc đó Bot mới rep DUY NHẤT 1 tin chờ nhân viên rồi lại dừng nhường nhân viên!
         """
+        from bot.bot_config import clean_customer_name
         ts = now_ts if now_ts is not None else time.time()
-        t_key = make_thread_key(customer_name, thread_id)
+        c_name = clean_customer_name(customer_name)
+        t_key = make_thread_key(c_name, thread_id)
         norm_msg = normalize_text(last_message_text)
 
         # 1. Nếu không có nội dung tin nhắn hoặc tin nhắn cuối cùng là của chính Fanpage -> Bỏ qua
@@ -203,7 +212,7 @@ class BotMemoryStore:
         record = self.data["conversations"].get(t_key)
         # Fallback tìm theo tên khách nếu trước đó lưu từ comment_private_reply (chưa có thread_id)
         if record is None and thread_id:
-            name_key = make_thread_key(customer_name, "")
+            name_key = make_thread_key(c_name, "")
             if name_key in self.data["conversations"]:
                 record = self.data["conversations"].pop(name_key)
                 self.data["conversations"][t_key] = record
@@ -212,52 +221,46 @@ class BotMemoryStore:
         if record is None and not has_prior_page_messages_in_dom:
             reply_text = pick_template(
                 FIRST_INBOX_REPLIES,
-                customer_name=customer_name,
+                customer_name=c_name,
                 category_key="first_inbox",
             )
             return "FIRST_REPLY", reply_text, t_key
 
         # 3. Trường hợp trên giao diện DOM đã từng có tin nhắn của Page nhưng bộ nhớ chưa lưu
         if record is None and has_prior_page_messages_in_dom:
-            reply_text = pick_template(
-                WAIT_STAFF_REPLIES,
-                customer_name=customer_name,
-                category_key="wait_staff",
-            )
-            return "WAIT_STAFF_REPLY", reply_text, t_key
+            # Ghi nhận khách đã ở Stage 1 (đã có Page trả lời) để nhường nhân viên xử lý
+            self.data["conversations"][t_key] = {
+                "customer_name": c_name,
+                "stage": 1,
+                "last_replied_customer_msg": norm_msg,
+                "last_bot_reply_ts": ts,
+                "source": "prior_history",
+            }
+            self.save()
+            return "NONE", "", t_key
 
         # 4. Đã có hồ sơ hội thoại trong bộ nhớ
         assert record is not None
-        stage = int(record.get("stage", 1))
         last_replied_msg = record.get("last_replied_customer_msg", "")
         last_bot_ts = float(record.get("last_bot_reply_ts", 0))
         elapsed_seconds = ts - last_bot_ts
+        silence_threshold = SILENCE_REMINDER_MINUTES * 60  # 180 phút = 10,800 giây (3 tiếng)
 
         # Nếu tin nhắn cuối cùng trên màn hình vẫn chính là tin nhắn mà Bot vừa trả lời -> Không rep lại
-        if norm_msg == last_replied_msg and elapsed_seconds < SILENCE_REMINDER_MINUTES * 60:
+        if norm_msg == last_replied_msg and elapsed_seconds < silence_threshold:
             return "NONE", "", t_key
 
-        if stage == 1:
-            # Khách đã nhận câu chào lần 1, sau đó nhắn lại (hoặc im một lúc rồi nhắn tiếp)
-            if elapsed_seconds >= FOLLOWUP_MIN_SILENCE_SECONDS or norm_msg != last_replied_msg:
-                reply_text = pick_template(
-                    WAIT_STAFF_REPLIES,
-                    customer_name=customer_name,
-                    category_key="wait_staff",
-                )
-                return "WAIT_STAFF_REPLY", reply_text, t_key
-            return "NONE", "", t_key
-
-        # Stage >= 2: Bot đã gửi câu "Đợi nhân viên sẽ liên hệ lại ngay" rồi.
-        # Giữ im lặng tuyệt đối để nhường nhân viên thật, trừ khi khách im lặng quá lâu (> 120 phút) rồi nhắn lại.
-        if elapsed_seconds >= SILENCE_REMINDER_MINUTES * 60:
+        # Nếu 2 bên im lặng quá lâu tầm 3 tiếng mà khách nhắn lại tin mới:
+        # Bot rep DUY NHẤT 1 tin chờ nhân viên (WAIT_STAFF_REPLY), rồi lại dừng để chờ nhân viên
+        if elapsed_seconds >= silence_threshold and norm_msg != last_replied_msg:
             reply_text = pick_template(
                 WAIT_STAFF_REPLIES,
-                customer_name=customer_name,
+                customer_name=c_name,
                 category_key="wait_staff",
             )
             return "WAIT_STAFF_REPLY", reply_text, t_key
 
+        # Nếu chưa đủ 3 tiếng: Bot giữ im lặng tuyệt đối ("NONE") để nhân viên thật trả lời khách
         return "NONE", "", t_key
 
     def record_inbox_reply(

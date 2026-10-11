@@ -53,12 +53,68 @@ PAGE_NAMES = [
     "ba loc green",
 ]
 
+# Danh sách các chuỗi nhãn hệ thống tuyệt đối không dùng làm tên khách hàng
+SYSTEM_BLACKLIST_STRINGS = [
+    "chỉ báo trạng thái online",
+    "online status indicator",
+    "đang hoạt động",
+    "hoạt động",
+    "đang có mặt",
+    "hộp thư",
+    "chưa đọc",
+    "bình luận trên trang",
+    "trao đổi thêm",
+    "tạo quảng cáo",
+    "thông tin chi tiết",
+    "quy trình tự động hóa",
+    "quảng bá",
+    "theo dõi lại",
+    "theo dõi",
+    "mới nhất",
+    "phù hợp nhất",
+    "tất cả bình luận",
+    "xem thêm",
+    "xem 1 phản hồi",
+    "ẩn",
+    "trả lời",
+    "bạn",
+    "khách",
+    "user",
+    "facebook user",
+    "người dùng facebook",
+]
+
+
+def clean_customer_name(name: str) -> str:
+    """Lọc sạch tên khách hàng, loại bỏ hoàn toàn các chuỗi nhãn hệ thống hoặc ký tự thừa."""
+    import re
+    if not name:
+        return "bạn"
+    cleaned = str(name).strip()
+
+    # Nếu truyền vào nguyên văn chuỗi aria-label: 'Bình luận dưới tên Trí Đức vào 2 giờ trước'
+    aria_match = re.search(r"bình luận dưới tên\s+(.+?)\s+vào", cleaned, re.IGNORECASE)
+    if aria_match:
+        cleaned = aria_match.group(1).strip()
+
+    cleaned = cleaned.split("·")[0].split("•")[0].split("\n")[0].strip()
+    norm = " ".join(cleaned.lower().split())
+    if not norm:
+        return "bạn"
+    if any(bad in norm for bad in SYSTEM_BLACKLIST_STRINGS):
+        return "bạn"
+    if any(p in norm for p in PAGE_NAMES):
+        return "bạn"
+    if len(cleaned) < 2 or len(cleaned) > 50:
+        return "bạn"
+    return cleaned
+
+
 # Thông số thời gian & Chống Facebook quét Spam (Human-like delays)
 SCAN_INTERVAL_SECONDS = (40, 70)          # Khoảng nghỉ giữa mỗi chu kỳ quét (40 - 70 giây)
 ACTION_COOLDOWN_SECONDS = (6, 14)         # Nghỉ ngơi giữa mỗi khách hàng (6 - 14 giây)
 TYPING_DELAY_MS = (20, 45)                # Tốc độ gõ từng ký tự (ms) như người thật
-FOLLOWUP_MIN_SILENCE_SECONDS = 15         # Thời gian tối thiểu sau câu chào lần 1 để tính là khách nhắn lại
-SILENCE_REMINDER_MINUTES = 120            # Sau khi đã báo "Đợi nhân viên", chỉ nhắc lại nếu khách im > 120 phút rồi nhắn tiếp
+SILENCE_REMINDER_MINUTES = 180            # 3 tiếng (180 phút): 2 bên im lặng quá 3 tiếng khách nhắn lại mới báo tin chờ 1 lần
 MAX_THREADS_PER_CYCLE = 10                # Số hội thoại tối đa kiểm tra mỗi vòng quét
 
 # ==============================================================================
@@ -200,15 +256,7 @@ def pick_template(
     if not templates:
         return ""
 
-    clean_name = (customer_name or "").strip()
-    if not clean_name or clean_name.lower() in (
-        "bạn",
-        "khách",
-        "user",
-        "facebook user",
-        "người dùng facebook",
-    ):
-        clean_name = "bạn"
+    clean_name = clean_customer_name(customer_name)
 
     total = len(templates)
     if total == 1:

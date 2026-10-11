@@ -46,18 +46,16 @@ jobs:
         run: |
           python 2_chay_bot_truc_page.py --headless --max-minutes 320
 
-      - name: 5. Lưu bộ nhớ trạng thái hội thoại (bot_memory.json) sang ca sau
+      - name: 5. Lưu bộ nhớ trạng thái hội thoại & tình trạng VPS sang ca sau
         if: always()
         run: |
-          if [ -f "state/bot_memory.json" ]; then
-            git config user.name "dan86-bot"
-            git config user.email "bot@dan86.vn"
-            git add state/bot_memory.json
-            if ! git diff --staged --quiet; then
-              git commit -m "chore: cap nhat bo nho bot [skip ci]"
-              git pull --rebase origin master || true
-              git push origin HEAD:master || true
-            fi
+          git config user.name "dan86-bot"
+          git config user.email "bot@dan86.vn"
+          git add state/bot_memory.json state/bot_status.json || true
+          if ! git diff --staged --quiet; then
+            git commit -m "chore: cap nhat bo nho bot & trang thai VPS [skip ci]" || true
+            git pull --rebase origin master || true
+            git push origin HEAD:master || true
           fi
 
       - name: 6. Tự động gọi Ca VPS tiếp theo nối đuôi 24/24

@@ -30,7 +30,9 @@ from bot.bot_config import (
     META_INBOX_MESSENGER_URL,
     PAGE_NAMES,
     STORAGE_STATE_FILE,
+    SYSTEM_BLACKLIST_STRINGS,
     TYPING_DELAY_MS,
+    clean_customer_name,
 )
 from bot.memory_store import BotMemoryStore, normalize_text
 
@@ -236,68 +238,182 @@ async def verify_logged_in(page: Page) -> bool:
 # ==============================================================================
 async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
     """
-    Phân tích khung chi tiết bình luận bên phải của Meta Business Suite để lấy:
-    - Tên khách bình luận (`author_name`)
-    - Nội dung bình luận của khách (`comment_text`)
-    - ID hoặc dấu hiệu bình luận (`comment_id`)
-    - Đã có câu trả lời của Fanpage bên dưới chưa (`has_page_reply`)
+    Phân tích khung chi tiết bình luận bên phải của Meta Business Suite:
+    - Loại bỏ 100% các phần tử hệ thống ("Chỉ báo trạng thái online", "Đang hoạt động", v.v.)
+    - Lấy chính xác tên khách hàng (từ aria-label 'Bình luận dưới tên ...' hoặc link tác giả)
+    - Lấy nội dung bình luận sạch của khách
+    - Kiểm tra xem bình luận này đã có phản hồi của Fanpage bên dưới chưa
+    - Trả về index của article mục tiêu cần trả lời (`target_article_index`)
     """
     js_code = """
     (pageNames) => {
-        const result = {
-            author_name: "bạn",
-            comment_text: "",
-            comment_id: "",
-            has_page_reply: false
+        const blacklist = [
+            "chỉ báo trạng thái online",
+            "online status indicator",
+            "đang hoạt động",
+            "đang có mặt",
+            "hộp thư",
+            "chưa đọc",
+            "bình luận trên trang",
+            "trao đổi thêm",
+            "tạo quảng cáo",
+            "thông tin chi tiết",
+            "quy trình tự động hóa",
+            "quảng bá",
+            "theo dõi lại",
+            "theo dõi",
+            "mới nhất",
+            "phù hợp nhất",
+            "tất cả bình luận",
+            "xem thêm",
+            "xem 1 phản hồi",
+            "ẩn",
+            "trả lời",
+        ];
+
+        const isSystemString = (s) => {
+            if (!s) return true;
+            const low = s.toLowerCase().trim();
+            return blacklist.some(b => low.includes(b)) || pageNames.some(p => low.startsWith(p));
         };
 
-        // Tìm vùng hiển thị chi tiết bài viết & bình luận ở giữa/bên phải màn hình
-        const mainAreas = Array.from(document.querySelectorAll('[role="main"], [role="region"], [data-pagelet]'))
-            .filter(el => el.getBoundingClientRect().left > 280 && el.innerText && el.innerText.trim().length > 10);
+        // Tìm tất cả articles trong vùng hiển thị chi tiết bài viết (x > 300)
+        const allArticles = Array.from(document.querySelectorAll('[role="article"]'))
+            .filter(el => {
+                const r = el.getBoundingClientRect();
+                return r.left > 300 && r.height > 15;
+            });
 
-        const container = mainAreas.length > 0 ? mainAreas[mainAreas.length - 1] : document.body;
-        const articles = Array.from(container.querySelectorAll('[role="article"], [data-testid*="comment"]'));
+        // Lọc bỏ article chứa nhãn online indicator
+        const commentArticles = allArticles.filter(art => {
+            const aria = (art.getAttribute('aria-label') || '').toLowerCase();
+            const text = (art.innerText || '').toLowerCase();
+            return !aria.includes('chỉ báo trạng thái online') && !text.includes('chỉ báo trạng thái online');
+        });
 
-        if (articles.length > 0) {
-            for (const art of articles) {
-                const txt = (art.innerText || "").trim();
-                const lower = txt.toLowerCase();
-                const isPage = pageNames.some(p => lower.startsWith(p) || lower.includes(p + "\\n"));
-                if (isPage) {
-                    result.has_page_reply = true;
-                } else if (!result.comment_text && txt.length > 1) {
-                    const lines = txt.split("\\n").map(s => s.trim()).filter(Boolean);
-                    if (lines.length >= 2) {
-                        result.author_name = lines[0];
-                        result.comment_text = lines.slice(1).join(" ");
-                    } else if (lines.length === 1) {
-                        result.comment_text = lines[0];
+        const parsedComments = [];
+        for (let i = 0; i < commentArticles.length; i++) {
+            const art = commentArticles[i];
+            const aria = (art.getAttribute('aria-label') || '').trim();
+            const inner = (art.innerText || '').trim();
+            const lowerAria = aria.toLowerCase();
+            const lowerInner = inner.toLowerCase();
+
+            // Kiểm tra xem article này là phản hồi của chính Fanpage
+            const isPageReply = lowerAria.includes("dưới tên dần86farm") ||
+                                lowerAria.includes("dưới tên dan86") ||
+                                pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\\n") || lowerInner.includes("tác giả\\n" + p));
+
+            // Trích xuất tên tác giả
+            let authorName = "";
+            const mAria = aria.match(/Bình luận dưới tên\\s+(.+?)(?:\\s+vào\\s+|$)/i) ||
+                          aria.match(/Comment by\\s+(.+?)(?:\\s+ago|\\s+at|\\s+on|$)/i);
+            if (mAria && mAria[1]) {
+                authorName = mAria[1].trim();
+            }
+
+            if (!authorName || isSystemString(authorName)) {
+                // Thử lấy từ button/link tên tác giả
+                const authorBtn = art.querySelector('div[role="button"]:not([aria-label]), a[role="link"], span[dir="auto"]');
+                if (authorBtn && authorBtn.innerText) {
+                    const cand = authorBtn.innerText.trim();
+                    if (!isSystemString(cand) && cand.length >= 2 && cand.length <= 50) {
+                        authorName = cand;
                     }
                 }
             }
+
+            if (!authorName || isSystemString(authorName)) {
+                const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
+                for (const line of lines) {
+                    if (!isSystemString(line) && line.length >= 2 && line.length <= 50 && !line.includes('tuần') && !line.includes('ngày') && !line.includes('phút') && !line.includes('giờ') && line !== '·') {
+                        authorName = line;
+                        break;
+                    }
+                }
+            }
+
+            // Trích xuất nội dung bình luận
+            const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
+            const contentLines = lines.filter(l => {
+                const low = l.toLowerCase();
+                if (l === authorName || low.includes('tuần') || low.includes('ngày') || low.includes('phút') || low.includes('giờ') || l === '·') return false;
+                if (['trả lời', 'ẩn', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'thích', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả', '1', '2', '3'].includes(low)) return false;
+                return true;
+            });
+            const commentText = contentLines.join(" ").trim();
+
+            // Kiểm tra nút Trả lời
+            const actionEls = Array.from(art.querySelectorAll('[role="button"], span, div')).filter(el => el.children.length === 0);
+            const hasReplyBtn = actionEls.some(el => {
+                const t = (el.innerText || '').trim();
+                return t === 'Trả lời' || t === 'Reply';
+            });
+
+            parsedComments.push({
+                domIndex: allArticles.indexOf(art),
+                isPageReply: isPageReply,
+                authorName: authorName || "bạn",
+                commentText: commentText,
+                hasReplyBtn: hasReplyBtn,
+                innerPreview: inner.slice(0, 100)
+            });
         }
 
-        // Fallback nếu Meta Business Suite dùng cấu trúc div phẳng thay vì role="article"
-        if (!result.comment_text) {
-            const fullText = (container.innerText || "").trim();
-            const lowerFull = fullText.toLowerCase();
-            if (pageNames.some(p => lowerFull.includes("đã gửi thông tin chi tiết") || lowerFull.includes("vừa nhắn tin tư vấn") || lowerFull.includes("đã gửi tin nhắn riêng"))) {
-                result.has_page_reply = true;
+        // Tìm bình luận khách chưa có câu trả lời của Page
+        let target = null;
+        for (let j = 0; j < parsedComments.length; j++) {
+            const item = parsedComments[j];
+            if (item.isPageReply) continue;
+
+            let hasReplyBelow = false;
+            if (j + 1 < parsedComments.length && parsedComments[j + 1].isPageReply) {
+                hasReplyBelow = true;
             }
-            const lines = fullText.split("\\n").map(s => s.trim()).filter(s => s.length > 1);
-            if (lines.length >= 2) {
-                result.author_name = lines[0].slice(0, 50);
-                result.comment_text = lines.slice(1, 5).join(" ").slice(0, 300);
+
+            if (!hasReplyBelow && item.hasReplyBtn && item.commentText) {
+                target = {
+                    author_name: item.authorName,
+                    comment_text: item.commentText,
+                    target_article_index: item.domIndex,
+                    has_page_reply: false,
+                    comment_id: ""
+                };
+                break;
             }
+        }
+
+        if (!target && parsedComments.length > 0) {
+            const first = parsedComments.find(p => !p.isPageReply) || parsedComments[0];
+            target = {
+                author_name: first.authorName,
+                comment_text: first.commentText,
+                target_article_index: first.domIndex,
+                has_page_reply: true,
+                comment_id: ""
+            };
         }
 
         const urlParams = new URLSearchParams(window.location.search);
-        result.comment_id = urlParams.get("selected_item_id") || urlParams.get("comment_id") || "";
-        return result;
+        const commentId = urlParams.get("selected_item_id") || urlParams.get("comment_id") || "";
+        if (target) {
+            target.comment_id = commentId;
+            return target;
+        }
+
+        return {
+            author_name: "bạn",
+            comment_text: "",
+            comment_id: commentId,
+            has_page_reply: false,
+            target_article_index: -1
+        };
     }
     """
     try:
-        return await page.evaluate(js_code, PAGE_NAMES)
+        raw_res = await page.evaluate(js_code, PAGE_NAMES)
+        raw_res["author_name"] = clean_customer_name(raw_res.get("author_name", ""))
+        return raw_res
     except Exception as e:
         logger.debug("Không thể phân tích DOM bình luận: %s", e)
         return {
@@ -305,11 +421,13 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             "comment_text": "",
             "comment_id": "",
             "has_page_reply": False,
+            "target_article_index": -1,
         }
 
 
 async def send_private_inbox_to_commenter(
     page: Page,
+    target_article: Optional[Locator],
     private_reply_text: str,
     dry_run: bool = False,
 ) -> bool:
@@ -329,22 +447,41 @@ async def send_private_inbox_to_commenter(
     ]
 
     clicked_modal = False
-    for sel in msg_btn_selectors:
-        loc = page.locator(sel).first
-        if await loc.count() > 0 and await loc.is_visible():
-            if dry_run:
-                logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn' riêng cho người comment: %s", private_reply_text[:80])
-                return True
-            try:
-                await loc.click()
-                clicked_modal = True
-                await human_sleep(1.5, 2.8)
-                break
-            except Exception:
-                continue
+
+    # 1. Ưu tiên tìm nút trong chính article bình luận của khách
+    if target_article is not None:
+        for sel in msg_btn_selectors:
+            loc = target_article.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible():
+                if dry_run:
+                    logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn' riêng cho người comment: %s", private_reply_text[:80])
+                    return True
+                try:
+                    await loc.click()
+                    clicked_modal = True
+                    await human_sleep(1.5, 2.8)
+                    break
+                except Exception:
+                    continue
+
+    # 2. Fallback tìm nút trên toàn trang nếu trong article không có
+    if not clicked_modal:
+        for sel in msg_btn_selectors:
+            loc = page.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible():
+                if dry_run:
+                    logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn' riêng cho người comment: %s", private_reply_text[:80])
+                    return True
+                try:
+                    await loc.click()
+                    clicked_modal = True
+                    await human_sleep(1.5, 2.8)
+                    break
+                except Exception:
+                    continue
 
     if not clicked_modal:
-        logger.info("Không thấy nút 'Gửi tin nhắn' dưới bình luận (có thể đã gửi inbox trước đó hoặc khách chặn tin nhắn).")
+        logger.info("Không thấy nút 'Gửi tin nhắn' dưới bình luận (có thể bình luận quá hạn 7 ngày theo chính sách Meta, hoặc khách chặn tin nhắn).")
         return False
 
     # Tìm ô nhập tin nhắn trong hộp thoại (Modal) hoặc khung gửi tin nhắn riêng vừa bật lên
@@ -358,11 +495,9 @@ async def send_private_inbox_to_commenter(
         boxes = page.locator(input_sel)
         count = await boxes.count()
         if count > 0:
-            # Lấy textbox nằm ở trên cùng (trong dialog vừa mở)
             target_box = boxes.last
             if await target_box.is_visible():
                 await type_human_like(page, target_box, private_reply_text)
-                # Tìm nút Gửi trong dialog hoặc nhấn Enter
                 send_btn = page.locator(
                     'div[role="dialog"] [aria-label*="Gửi"], '
                     'div[role="dialog"] [aria-label*="Send"], '
@@ -387,9 +522,11 @@ async def process_facebook_comments_tab(
 ) -> int:
     """
     Quét tab Bình luận Facebook trên Meta Business Suite:
-    1. Thả Like bình luận.
-    2. Random câu trả lời công khai dưới bình luận (1 lần duy nhất).
-    3. Tự động bấm 'Gửi tin nhắn' để Inbox riêng cho người bình luận đó (1 lần duy nhất).
+    1. Lọc sạch tên khách hàng (chống lấy nhầm 'Chỉ báo trạng thái online').
+    2. Bấm chính xác nút 'Trả lời' dưới bình luận của khách để mở nested reply (không đăng thành cmt gốc bài viết).
+    3. Thả Like bình luận.
+    4. Random câu trả lời công khai lồng dưới bình luận (1 lần duy nhất).
+    5. Tự động bấm 'Gửi tin nhắn' để Inbox riêng cho người bình luận đó (1 lần duy nhất).
     """
     replied_count = 0
     logger.info("Đang kiểm tra Tab Bình luận Facebook: %s", META_INBOX_COMMENTS_URL)
@@ -400,7 +537,7 @@ async def process_facebook_comments_tab(
         logger.warning("Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!")
         return 0
 
-    # Tìm danh sách các mục bình luận ở cột bên trái
+    # Tìm danh sách các bài viết / bài đăng có bình luận ở cột bên trái
     thread_selectors = [
         '[role="navigation"] [role="listitem"]',
         '[role="grid"] [role="row"]',
@@ -437,6 +574,7 @@ async def process_facebook_comments_tab(
             comment_text = info.get("comment_text") or preview_text
             comment_id = info.get("comment_id") or ""
             has_page_reply = bool(info.get("has_page_reply", False))
+            target_art_idx = int(info.get("target_article_index", -1))
 
             if is_page_author_name(author_name):
                 continue
@@ -449,43 +587,77 @@ async def process_facebook_comments_tab(
             )
 
             if not should_rep:
-                logger.debug("Bỏ qua bình luận của %s (đã trả lời trước đó).", author_name)
+                logger.debug("Bỏ qua bình luận của %s (đã trả lời trước đó hoặc không hợp lệ).", author_name)
                 continue
 
             public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(author_name)
             logger.info("Phát hiện bình luận mới từ [%s]: %s", author_name, comment_text[:80])
 
             if dry_run:
-                logger.info("[DRY-RUN] Sẽ rep cmt công khai: %s", public_reply)
+                logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
                 logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
                 replied_count += 1
                 continue
 
-            # Bước 1: Thả Like bình luận (nếu có nút Thích chưa bấm)
-            like_btn = page.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
-            if await like_btn.count() > 0 and await like_btn.is_visible():
-                try:
-                    await like_btn.click()
-                    await human_sleep(0.8, 1.5)
-                except Exception:
-                    pass
+            # Xác định article bình luận mục tiêu
+            target_art: Optional[Locator] = None
+            if target_art_idx >= 0:
+                all_arts = page.locator('[role="article"]')
+                if await all_arts.count() > target_art_idx:
+                    target_art = all_arts.nth(target_art_idx)
 
-            # Bước 2: Gõ câu trả lời công khai vào ô bình luận
-            comment_box = page.locator(
-                'div[role="textbox"][contenteditable="true"], '
-                'textarea[placeholder*="bình luận"], '
-                'textarea[placeholder*="comment"]'
+            # Bước 1: Thả Like bình luận của khách (nếu có nút Thích chưa bấm trong target_art)
+            if target_art is not None:
+                like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
+                if await like_btn.count() > 0 and await like_btn.is_visible():
+                    try:
+                        await like_btn.click()
+                        await human_sleep(0.8, 1.5)
+                    except Exception:
+                        pass
+
+            # Bước 2: Bấm chính xác nút "Trả lời" (Reply) của bình luận khách để mở nested reply!
+            reply_clicked = False
+            if target_art is not None:
+                reply_btn = target_art.locator(
+                    'div[role="button"]:has-text("Trả lời"), '
+                    'span:has-text("Trả lời"), '
+                    'div[role="button"]:has-text("Reply")'
+                ).first
+                if await reply_btn.count() > 0 and await reply_btn.is_visible():
+                    try:
+                        await reply_btn.click()
+                        reply_clicked = True
+                        await human_sleep(1.2, 2.2)
+                    except Exception as e_reply:
+                        logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
+
+            # Tìm ô nhập phản hồi lồng nhau cấp 2 (nested reply box)
+            nested_box = page.locator(
+                'div[role="textbox"][aria-label*="Trả lời với vai trò"], '
+                'div[role="textbox"][aria-label*="Reply as"]'
             ).first
 
-            if await comment_box.count() > 0 and await comment_box.is_visible():
-                await type_human_like(page, comment_box, public_reply)
+            if await nested_box.count() == 0 or not await nested_box.is_visible():
+                nested_box = page.locator('div[role="textbox"]:focus').first
+
+            if await nested_box.count() == 0 or not await nested_box.is_visible():
+                nested_box = page.locator(
+                    'div[role="textbox"][contenteditable="true"], '
+                    'textarea[placeholder*="bình luận"], '
+                    'textarea[placeholder*="comment"]'
+                ).first
+
+            if await nested_box.count() > 0 and await nested_box.is_visible():
+                await type_human_like(page, nested_box, public_reply)
                 await page.keyboard.press("Enter")
                 await human_sleep(2.5, 4.0)
-                logger.info("Đã trả lời bình luận công khai cho [%s].", author_name)
+                logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: %s).", author_name, reply_clicked)
 
                 # Bước 3: Tự động bấm Gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
                 inbox_sent = await send_private_inbox_to_commenter(
                     page=page,
+                    target_article=target_art,
                     private_reply_text=private_inbox_reply,
                     dry_run=dry_run,
                 )
@@ -514,7 +686,7 @@ async def process_facebook_comments_tab(
 async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
     """
     Phân tích cuộc hội thoại Messenger đang mở trên Meta Business Suite để xác định:
-    - Tên khách hàng (`customer_name`)
+    - Tên khách hàng (`customer_name`) trích xuất chính xác và làm sạch
     - Tin nhắn cuối cùng (`last_message_text`)
     - Tin nhắn cuối cùng là của Fanpage hay của khách (`last_sender_is_page`)
     - Trước đó Fanpage đã từng gửi tin nhắn nào trong cuộc trò chuyện này chưa (`has_prior_page_messages`)
@@ -522,6 +694,28 @@ async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
     """
     js_code = """
     (pageNames) => {
+        const blacklist = [
+            "chỉ báo trạng thái online",
+            "online status indicator",
+            "đang hoạt động",
+            "đang có mặt",
+            "hộp thư",
+            "chưa đọc",
+            "tạo quảng cáo",
+            "thông tin chi tiết",
+            "quy trình tự động hóa",
+            "quảng bá"
+        ];
+
+        const isCleanName = (name) => {
+            if (!name) return false;
+            const low = name.toLowerCase().trim();
+            if (low.length < 2 || low.length > 50) return false;
+            if (blacklist.some(b => low.includes(b))) return false;
+            if (pageNames.some(p => low.includes(p))) return false;
+            return true;
+        };
+
         const info = {
             customer_name: "bạn",
             last_message_text: "",
@@ -533,40 +727,66 @@ async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
         const urlParams = new URLSearchParams(window.location.search);
         info.thread_id = urlParams.get("selected_item_id") || "";
 
-        // Lấy tên khách hàng trên thanh tiêu đề cuộc trò chuyện
-        const headings = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"]'))
-            .filter(el => el.getBoundingClientRect().left > 280 && el.getBoundingClientRect().top < 200);
-        for (const h of headings) {
-            const t = (h.innerText || "").trim();
-            if (t && t.length > 1 && t.length < 60 && !t.toLowerCase().includes("hộp thư")) {
-                info.customer_name = t.split("\\n")[0].trim();
+        // Cách 1: Tiêu đề ở cột chi tiết bên phải (role="complementary" hoặc x > 1100)
+        const rightHeadings = Array.from(document.querySelectorAll('[role="complementary"] h2, [role="complementary"] h1, [role="heading"]'))
+            .filter(el => {
+                const r = el.getBoundingClientRect();
+                return r.left > 1100 && r.top < 220;
+            });
+        for (const h of rightHeadings) {
+            const t = (h.innerText || "").trim().split("\\n")[0].trim();
+            if (isCleanName(t)) {
+                info.customer_name = t;
                 break;
             }
         }
 
-        // Tìm tất cả các bong bóng tin nhắn (message rows) trong khung chat chính
-        const msgNodes = Array.from(document.querySelectorAll('[role="row"], [data-testid*="message"], [dir="auto"]'))
+        // Cách 2: Tiêu đề trên thanh header chat ở giữa (x: 400..900, y: 120..260)
+        if (info.customer_name === "bạn") {
+            const centerEls = Array.from(document.querySelectorAll('h1, h2, h3, [role="heading"], div._4ik4, div._4ik5'))
+                .filter(el => {
+                    const r = el.getBoundingClientRect();
+                    return r.left > 400 && r.left < 900 && r.top > 120 && r.top < 260 && el.children.length === 0;
+                });
+            for (const el of centerEls) {
+                const t = (el.innerText || "").trim().split("\\n")[0].trim();
+                if (isCleanName(t)) {
+                    info.customer_name = t;
+                    break;
+                }
+            }
+        }
+
+        // Tìm tất cả các bong bóng tin nhắn trong khung chat (x: 380..1120, y: 120..840)
+        const chatNodes = Array.from(document.querySelectorAll('[dir="auto"], [role="row"]'))
             .filter(el => {
-                const rect = el.getBoundingClientRect();
-                return rect.left > 300 && rect.right < window.innerWidth - 250 && rect.height > 14 && rect.height < 500;
+                const r = el.getBoundingClientRect();
+                return r.left > 380 && r.right < 1120 && r.top > 120 && r.bottom < 840 && r.height >= 16;
             });
 
         const messages = [];
-        for (const node of msgNodes) {
+        for (const node of chatNodes) {
             const txt = (node.innerText || "").trim();
-            if (!txt || txt.length < 2) continue;
-            const rect = node.getBoundingClientRect();
-            const centerX = rect.left + rect.width / 2;
+            if (!txt || txt.length < 1) continue;
             const lower = txt.toLowerCase();
+            if (
+                lower.includes('đoạn chat này chứa tin trả lời') ||
+                lower.includes('đã trả lời một quảng cáo') ||
+                lower.includes('bạn có muốn được chỉ định') ||
+                lower.includes('chỉ định cuộc trò chuyện')
+            ) {
+                continue;
+            }
 
-            // Bong bóng tin nhắn của Page thường nằm lệch về bên phải hoặc chứa chữ ký thương hiệu DAN86
+            const r = node.getBoundingClientRect();
+            // Tin nhắn của Fanpage: nằm bên phải (r.left > 620) hoặc có chữ ký shop
             const hasBrandSignature = (
                 lower.includes("dan86.vn") ||
                 lower.includes("0933 133 516") ||
-                lower.includes("nhân viên tư vấn của shop") ||
-                lower.includes("bộ phận tư vấn sẽ phản hồi")
+                lower.includes("nhân viên tư vấn") ||
+                lower.includes("bộ phận tư vấn")
             );
-            const isRightAligned = rect.left > 560;
+            const isRightAligned = r.left > 620;
             const isPage = hasBrandSignature || isRightAligned;
 
             messages.push({ text: txt, isPage: isPage });
@@ -583,7 +803,9 @@ async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
     }
     """
     try:
-        return await page.evaluate(js_code, PAGE_NAMES)
+        raw = await page.evaluate(js_code, PAGE_NAMES)
+        raw["customer_name"] = clean_customer_name(raw.get("customer_name", ""))
+        return raw
     except Exception as e:
         logger.debug("Không thể phân tích DOM Messenger: %s", e)
         return {

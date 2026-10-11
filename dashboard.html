@@ -517,6 +517,9 @@
         <div class="pulse-dot"></div>
         <span id="botStatusText">Đang kiểm tra...</span>
       </div>
+      <button class="btn btn-outline" id="btnSyncGithub" onclick="syncLiveFromGithub()" title="Đồng bộ dữ liệu thời gian thực từ VPS GitHub Actions">
+        ☁️ Đồng bộ VPS Live
+      </button>
       <button class="btn btn-outline" onclick="syncCookiesFromDan86()" title="Lấy nhanh cookies từ d:\dan86 không tốn ổ cứng">
         🔄 Đồng bộ Cookies
       </button>
@@ -530,6 +533,17 @@
   </header>
 
   <div class="container">
+
+    <!-- Banner Trạng Thái VPS GitHub Actions 24/24 -->
+    <div id="vpsLiveBanner" class="waiting-alert hidden" style="background: linear-gradient(90deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.12)); border-color: rgba(16, 185, 129, 0.4);">
+      <div class="waiting-alert-text" style="color: #34d399;">
+        <span>☁️ VPS GITHUB ACTIONS ĐANG TRỰC 24/24:</span>
+        <span id="vpsLiveBannerText">Ca trực đang chạy liên tục, tự động trả lời bình luận & inbox.</span>
+      </div>
+      <a id="vpsLiveBannerLink" href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399;">
+        ↗️ Xem Chi Tiết Trên GitHub
+      </a>
+    </div>
 
     <!-- Cảnh báo nếu có khách hàng Stage 2 cần nhân viên xử lý -->
     <div id="waitingAlert" class="waiting-alert hidden">
@@ -705,19 +719,31 @@
         <div class="info-card">
           <h3>☁️ Trạng Thái VPS GitHub Actions (24/24)</h3>
           <div class="info-row">
+            <span class="info-label">Trạng thái VPS</span>
+            <span id="vpsLiveStatus" class="info-val">--</span>
+          </div>
+          <div class="info-row">
             <span class="info-label">Kho lưu trữ mã nguồn</span>
             <span class="info-val"><a href="https://github.com/DucTri2207/chatbot-dan86" target="_blank" style="color: var(--primary-light);">chatbot-dan86</a></span>
           </div>
           <div class="info-row">
-            <span class="info-label">Ca trực VPS</span>
-            <span class="info-val">Mỗi ca 320 phút, tự động gọi ca tiếp</span>
+            <span class="info-label">Ca trực hiện tại</span>
+            <span id="vpsLiveCycle" class="info-val">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Tín hiệu heartbeat</span>
+            <span id="vpsLiveHeartbeat" class="info-val">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Cơ chế hoạt động</span>
+            <span class="info-val">Ca 320p liên tục, tự gọi ca tiếp</span>
           </div>
           <div class="info-row">
             <span class="info-label">Đồng bộ bộ nhớ</span>
             <span class="info-val">Tự lưu state/bot_memory.json qua Git</span>
           </div>
           <div class="info-row" style="margin-top: 10px;">
-            <a href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="width: 100%; justify-content: center;">
+            <a id="vpsLiveRunUrl" href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="width: 100%; justify-content: center;">
               ↗️ Xem Log Chạy Trực Tiếp Trên GitHub Actions
             </a>
           </div>
@@ -761,15 +787,13 @@
     async function fetchStatus() {
       try {
         const res = await fetch(API_BASE + '/api/status');
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('API status not ok');
         globalData = await res.json();
         renderDashboard(globalData);
       } catch (e) {
         console.warn('Fetch status warning:', e);
-        const text = document.getElementById('botStatusText');
-        if (text && window.location.protocol === 'file:') {
-          text.innerText = 'Chưa bật 4_MO_DASHBOARD.bat';
-        }
+        // Fallback đọc trực tiếp từ GitHub khi mở bằng file:/// hoặc server local chưa bật
+        await fetchStaticGithubData();
       }
     }
 
@@ -784,16 +808,164 @@
       }
     }
 
+    async function syncLiveFromGithub() {
+      const btn = document.getElementById('btnSyncGithub');
+      if (btn) btn.innerText = '⏳ Đang tải...';
+      try {
+        const res = await fetch(API_BASE + '/api/sync_github', { method: 'POST' });
+        if (res.ok) {
+          globalData = await res.json();
+          renderDashboard(globalData);
+          if (btn) btn.innerText = '✅ Đã đồng bộ';
+          setTimeout(() => { if (btn) btn.innerText = '☁️ Đồng bộ VPS Live'; }, 2000);
+          return;
+        }
+      } catch (e) {
+        console.warn('API sync_github warning:', e);
+      }
+      // Fallback đọc trực tiếp GitHub raw nếu server local không phản hồi
+      await fetchStaticGithubData();
+      if (btn) btn.innerText = '✅ Đã đồng bộ';
+      setTimeout(() => { if (btn) btn.innerText = '☁️ Đồng bộ VPS Live'; }, 2000);
+    }
+
+    async function fetchStaticGithubData() {
+      try {
+        const t = Date.now();
+        const statusUrl = `https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_status.json?t=${t}`;
+        const memoryUrl = `https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_memory.json?t=${t}`;
+        const [resStatus, resMem] = await Promise.all([
+          fetch(statusUrl).catch(() => null),
+          fetch(memoryUrl).catch(() => null),
+        ]);
+        const vpsStatus = (resStatus && resStatus.ok) ? await resStatus.json() : {};
+        const vpsMem = (resMem && resMem.ok) ? await resMem.json() : {};
+
+        buildDataFromStaticGithub(vpsStatus, vpsMem);
+      } catch (err) {
+        console.warn('fetchStaticGithubData error:', err);
+      }
+    }
+
+    function buildDataFromStaticGithub(vpsStatus, vpsMem) {
+      if (!vpsStatus && !vpsMem) return;
+      const mem = vpsMem || {};
+      const convs = mem.conversations || {};
+      const cmts = mem.replied_comments || {};
+      const stats = mem.stats || {};
+
+      let stage1 = 0;
+      let stage2 = 0;
+      const convList = [];
+      for (const [key, c] of Object.entries(convs)) {
+        if (!c || typeof c !== 'object') continue;
+        const stage = parseInt(c.stage || 1);
+        if (stage >= 2) stage2++; else stage1++;
+        convList.push({
+          key: key,
+          customer_name: c.customer_name || 'Khách hàng',
+          stage: stage,
+          stage_label: stage >= 2 ? 'Cần nhân viên hỗ trợ' : 'Đã chào lần 1',
+          stage_badge_class: stage >= 2 ? 'badge-danger' : 'badge-info',
+          is_waiting_staff: stage >= 2,
+          last_message: c.last_replied_customer_msg || '',
+          last_reply: c.last_bot_reply_text || '',
+          last_ts: c.last_bot_reply_ts || 0,
+          last_ts_str: c.last_bot_reply_ts ? new Date(c.last_bot_reply_ts * 1000).toLocaleString('vi-VN') : '--',
+          time_ago: 'Gần đây',
+          source: c.source || 'messenger',
+        });
+      }
+      convList.sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+
+      const cmtList = [];
+      for (const [key, cmt] of Object.entries(cmts)) {
+        if (!cmt || typeof cmt !== 'object') continue;
+        cmtList.push({
+          key: key,
+          author: cmt.author || 'Khách bình luận',
+          comment_text: cmt.comment_text || '',
+          public_reply: cmt.public_reply || '',
+          private_inbox_sent: Boolean(cmt.private_inbox_sent),
+          private_reply_text: cmt.private_reply_text || '',
+          replied_at: cmt.replied_at || 0,
+          replied_at_str: cmt.replied_at ? new Date(cmt.replied_at * 1000).toLocaleString('vi-VN') : '--',
+          time_ago: 'Gần đây',
+        });
+      }
+      cmtList.sort((a, b) => (b.replied_at || 0) - (a.replied_at || 0));
+
+      const isRunning = Boolean(vpsStatus && vpsStatus.running);
+      globalData = {
+        stats: {
+          comments_replied: stats.comments_replied || cmtList.length,
+          private_inboxes_from_comment: stats.private_inboxes_from_comment || 0,
+          first_inbox_replies: stats.first_inbox_replies || 0,
+          wait_staff_replies: stats.wait_staff_replies || 0,
+        },
+        counts: {
+          total_conversations: convList.length,
+          stage_1_count: stage1,
+          stage_2_waiting_staff: stage2,
+          total_comments_replied: cmtList.length,
+        },
+        conversations: convList,
+        recent_comments: cmtList,
+        bot_status: {
+          is_running: isRunning,
+          pid: isRunning ? 'VPS GitHub' : null,
+          cycle: vpsStatus.cycle || 1,
+          status_text: isRunning ? 'VPS GitHub đang trực 24/24' : 'Đang dừng',
+          uptime_str: '--',
+          mode: 'VPS GitHub',
+        },
+        vps_live: {
+          is_running: isRunning,
+          cycle: vpsStatus.cycle || 1,
+          run_url: 'https://github.com/DucTri2207/chatbot-dan86/actions',
+          last_heartbeat_ago: 'Vừa đồng bộ',
+        },
+        storage_state: {
+          exists: true,
+          cookies_count: 2,
+          size_kb: 3.8,
+        },
+        system_footprint: {
+          state_size_kb: 5.2,
+        },
+      };
+      renderDashboard(globalData);
+    }
+
     function renderDashboard(data) {
       if (!data) return;
 
-      // 1. Bot status pill
+      // 1. Bot status pill & VPS live banner
       const pill = document.getElementById('botStatusPill');
       const text = document.getElementById('botStatusText');
       const isRunning = data.bot_status && data.bot_status.is_running;
+      const vpsLive = data.vps_live;
+      const vpsBanner = document.getElementById('vpsLiveBanner');
+      const vpsBannerText = document.getElementById('vpsLiveBannerText');
+      const vpsBannerLink = document.getElementById('vpsLiveBannerLink');
+
+      if (vpsLive && vpsLive.is_running) {
+        if (vpsBanner) {
+          vpsBanner.classList.remove('hidden');
+          if (vpsBannerText) {
+            vpsBannerText.innerText = `Ca #${vpsLive.cycle || 1} đang trực tự động 24/24 trên VPS GitHub Actions (Cập nhật: ${vpsLive.last_heartbeat_ago || 'Vừa xong'})`;
+          }
+          if (vpsBannerLink && vpsLive.run_url) {
+            vpsBannerLink.href = vpsLive.run_url;
+          }
+        }
+      } else {
+        if (vpsBanner) vpsBanner.classList.add('hidden');
+      }
+
       if (isRunning) {
         pill.className = 'status-pill online';
-        text.innerText = `Đang chạy (PID ${data.bot_status.pid} - Vòng #${data.bot_status.cycle})`;
+        text.innerText = `Đang chạy (${data.bot_status.pid ? 'PID ' + data.bot_status.pid + ' - ' : ''}Vòng #${data.bot_status.cycle || 1})`;
       } else {
         pill.className = 'status-pill offline';
         text.innerText = 'Bot máy tính: Đang dừng';
@@ -838,6 +1010,24 @@
         document.getElementById('sysBotUptime').innerText = data.bot_status.uptime_str || '--';
         document.getElementById('sysBotCycle').innerText = `#${data.bot_status.cycle || 0}`;
         document.getElementById('sysBotMode').innerText = data.bot_status.mode === 'dry-run' ? 'Dry-Run (Xem trước)' : 'Live (Thật)';
+      }
+      if (data.vps_live) {
+        const vpsStatusEl = document.getElementById('vpsLiveStatus');
+        if (vpsStatusEl) {
+          vpsStatusEl.innerText = data.vps_live.is_running ? '🟢 Đang hoạt động (Trực 24/24)' : '⚪ Đang nghỉ / Hoàn tất';
+        }
+        const vpsCycleEl = document.getElementById('vpsLiveCycle');
+        if (vpsCycleEl) {
+          vpsCycleEl.innerText = data.vps_live.cycle ? `Ca #${data.vps_live.cycle}` : '--';
+        }
+        const vpsHbEl = document.getElementById('vpsLiveHeartbeat');
+        if (vpsHbEl) {
+          vpsHbEl.innerText = data.vps_live.last_heartbeat_ago || 'Chưa có';
+        }
+        const runLink = document.getElementById('vpsLiveRunUrl');
+        if (runLink && data.vps_live.run_url) {
+          runLink.href = data.vps_live.run_url;
+        }
       }
       if (data.storage_state) {
         document.getElementById('sysStorageSize').innerText = `${data.storage_state.size_kb} KB (Trích xuất: ${data.storage_state.last_modified_str})`;

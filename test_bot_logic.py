@@ -16,6 +16,7 @@ from bot.bot_config import (
     PRIVATE_REPLIES_FROM_COMMENT,
     SILENCE_REMINDER_MINUTES,
     WAIT_STAFF_REPLIES,
+    clean_customer_name,
     pick_template,
 )
 from bot.memory_store import BotMemoryStore
@@ -45,8 +46,28 @@ class TestDan86BotLogic(unittest.TestCase):
                 self.assertNotEqual(curr, prev, f"Bị trùng mẫu câu liên tiếp ở nhóm {category}")
                 prev = curr
 
-    def test_02_comment_reply_once_and_auto_inbox(self) -> None:
+    def test_02_clean_customer_name_and_system_blacklist(self) -> None:
+        """Kiểm tra xử lý lọc sạch tên hệ thống (Lỗi 1: Chỉ báo trạng thái online)."""
+        # 1. Nhãn hệ thống đứng một mình -> Trả về danh xưng mặc định 'bạn'
+        self.assertEqual(clean_customer_name("Chỉ báo trạng thái online"), "bạn")
+        self.assertEqual(clean_customer_name("Đang hoạt động"), "bạn")
+        self.assertEqual(clean_customer_name("Hoạt động 5 phút trước"), "bạn")
+
+        # 2. Tên khách kèm nhãn trạng thái -> Tách lấy tên khách chuẩn
+        self.assertEqual(clean_customer_name("Trí Đức\nChỉ báo trạng thái online"), "Trí Đức")
+        self.assertEqual(clean_customer_name("Bình luận dưới tên Trí Đức vào 2 giờ trước"), "Trí Đức")
+
+        # 3. Tác giả là nhãn hệ thống thì should_reply_comment phải bỏ qua ngay lập tức
+        should_rep, _ = self.memory.should_reply_comment(
+            author_name="Chỉ báo trạng thái online",
+            comment_text="Đang hoạt động",
+            has_page_reply_in_dom=False,
+        )
+        self.assertFalse(should_rep, "Bot không được phép rep thẻ chỉ báo trạng thái online")
+
+    def test_03_comment_reply_once_and_auto_inbox(self) -> None:
         """Đảm bảo bình luận chỉ được rep 1 lần duy nhất + gửi kèm inbox riêng."""
+        t0 = 1000.0
         should_rep, key = self.memory.should_reply_comment(
             author_name="Nguyễn Văn A",
             comment_text="Shop báo giá set quà 20/10 giúp mình nhé",
@@ -65,7 +86,7 @@ class TestDan86BotLogic(unittest.TestCase):
             public_reply=pub_reply,
             private_inbox_sent=True,
             private_reply_text=priv_reply,
-            now_ts=1000.0,
+            now_ts=t0,
         )
 
         # Quét lại bình luận đó lần 2 -> Phải bỏ qua (False)
@@ -76,23 +97,41 @@ class TestDan86BotLogic(unittest.TestCase):
         )
         self.assertFalse(should_rep_again)
 
-        # Khi khách "Nguyễn Văn A" (đã nhận inbox tự động từ comment) nhắn lại trong Messenger
-        # -> Bot phải gửi câu "Đợi nhân viên sẽ liên hệ lại ngay" (WAIT_STAFF_REPLY), không chào lặp lại lần 1!
-        action, reply_text, _ = self.memory.decide_inbox_action(
+        # Khách vừa nhận inbox từ comment, 1 phút sau nhắn lại trong Messenger:
+        # Bot phải GIỮ IM LẶNG (NONE) để nhường nhân viên tư vấn chốt đơn!
+        action_soon, _, _ = self.memory.decide_inbox_action(
             customer_name="Nguyễn Văn A",
             last_message_text="Mình muốn đặt 50 phần quà cho công ty",
             last_sender_is_page=False,
             has_prior_page_messages_in_dom=True,
-            now_ts=1060.0,
+            now_ts=t0 + 60.0,
         )
-        self.assertEqual(action, "WAIT_STAFF_REPLY")
+        self.assertEqual(action_soon, "NONE")
+
+        # Chỉ khi cả 2 bên im lặng >= 180 phút (3 tiếng) mà khách nhắn lại tin mới:
+        # Bot mới gửi câu WAIT_STAFF_REPLY duy nhất 1 lần!
+        t_after_3h = t0 + (SILENCE_REMINDER_MINUTES * 60) + 10.0
+        action_3h, reply_text, _ = self.memory.decide_inbox_action(
+            customer_name="Nguyễn Văn A",
+            last_message_text="Alo shop còn hàng không ạ?",
+            last_sender_is_page=False,
+            has_prior_page_messages_in_dom=True,
+            now_ts=t_after_3h,
+        )
+        self.assertEqual(action_3h, "WAIT_STAFF_REPLY")
         self.assertIn("0933 133 516", reply_text)
 
-    def test_03_inbox_three_stage_conversation_flow(self) -> None:
-        """Kiểm tra luồng 3 giai đoạn: Nhắn lần 1 -> Nhắn lại báo đợi nhân viên -> Im lặng chờ nhân viên."""
+    def test_04_inbox_exact_three_hour_silence_logic(self) -> None:
+        """
+        Kiểm tra Logic Lỗi 4 Messenger Inbox:
+        - Khách nhắn lần đầu -> rep DUY NHẤT 1 tin chào/tư vấn rồi dừng hẳn nhường nhân viên.
+        - Khách nhắn thêm tin thứ 2, thứ 3 trong 3 tiếng -> Bot vẫn im lặng tuyệt đối (NONE).
+        - Chỉ khi cả 2 bên im lặng >= 3 tiếng (180 phút) khách nhắn lại -> rep DUY NHẤT 1 tin chờ nhân viên.
+        - Sau đó lại dừng hẳn nhường nhân viên.
+        """
         t0 = 10000.0
 
-        # Giai đoạn 1: Khách nhắn lần đầu tiên
+        # 1. Khách nhắn lần đầu tiên -> FIRST_REPLY
         action1, reply1, t_key = self.memory.decide_inbox_action(
             customer_name="Anh Minh",
             last_message_text="Chào shop, tư vấn giúp mình set quà mây tre",
@@ -111,61 +150,63 @@ class TestDan86BotLogic(unittest.TestCase):
             now_ts=t0,
         )
 
-        # Ngay sau đó nếu tin nhắn cuối vẫn là của Page (hoặc khách chưa nhắn câu mới) -> NONE
-        action_same, _, _ = self.memory.decide_inbox_action(
-            customer_name="Anh Minh",
-            last_message_text="Chào shop, tư vấn giúp mình set quà mây tre",
-            last_sender_is_page=False,
-            has_prior_page_messages_in_dom=True,
-            thread_id="thread_999",
-            now_ts=t0 + 30,
-        )
-        self.assertEqual(action_same, "NONE")
-
-        # Giai đoạn 2: Khách im một lúc (ví dụ 5 phút) rồi nhắn lại câu mới -> Gửi mẫu "Đợi nhân viên sẽ liên hệ lại ngay"
-        t1 = t0 + 300
-        action2, reply2, _ = self.memory.decide_inbox_action(
+        # 2. Khách nhắn câu 2 sau 5 phút (t0 + 300s) -> Bot phải DỪNG HẲN (NONE) nhường nhân viên
+        action2, _, _ = self.memory.decide_inbox_action(
             customer_name="Anh Minh",
             last_message_text="Shop có xuất hóa đơn VAT không ạ?",
             last_sender_is_page=False,
             has_prior_page_messages_in_dom=True,
             thread_id="thread_999",
-            now_ts=t1,
+            now_ts=t0 + 300,
         )
-        self.assertEqual(action2, "WAIT_STAFF_REPLY")
+        self.assertEqual(action2, "NONE", "Khách nhắn câu 2 sau 5 phút phải trả về NONE nhường nhân viên")
+
+        # 3. Khách nhắn câu 3 sau 1 tiếng (t0 + 3600s) -> Vẫn trong khoảng < 3 tiếng -> NONE
+        action3, _, _ = self.memory.decide_inbox_action(
+            customer_name="Anh Minh",
+            last_message_text="Alo shop ơi check giúp mình với nha",
+            last_sender_is_page=False,
+            has_prior_page_messages_in_dom=True,
+            thread_id="thread_999",
+            now_ts=t0 + 3600,
+        )
+        self.assertEqual(action3, "NONE", "Khách nhắn sau 1 tiếng vẫn phải giữ im lặng nhường nhân viên")
+
+        # 4. Khi cả 2 bên im lặng >= 180 phút (3 tiếng = 10,800s) khách nhắn lại câu mới -> WAIT_STAFF_REPLY
+        t_after_3h = t0 + (180 * 60) + 1.0
+        action4, reply4, _ = self.memory.decide_inbox_action(
+            customer_name="Anh Minh",
+            last_message_text="Có ai trực không shop ơi?",
+            last_sender_is_page=False,
+            has_prior_page_messages_in_dom=True,
+            thread_id="thread_999",
+            now_ts=t_after_3h,
+        )
+        self.assertEqual(action4, "WAIT_STAFF_REPLY", "Sau >= 3 tiếng im lặng, khách nhắn lại phải rep WAIT_STAFF_REPLY")
+        self.assertIn("Anh Minh", reply4)
+
+        # Ghi nhận bot đã rep WAIT_STAFF_REPLY
         self.memory.record_inbox_reply(
             thread_key=t_key,
             customer_name="Anh Minh",
-            customer_message_text="Shop có xuất hóa đơn VAT không ạ?",
-            action_type=action2,
-            reply_text=reply2,
-            now_ts=t1,
+            customer_message_text="Có ai trực không shop ơi?",
+            action_type=action4,
+            reply_text=reply4,
+            now_ts=t_after_3h,
         )
 
-        # Giai đoạn 3: Khách nhắn tiếp câu nữa khi đang chờ nhân viên (sau 2 phút) -> Bot phải giữ im lặng (NONE)
-        action3, _, _ = self.memory.decide_inbox_action(
+        # 5. Ngay sau đó khách nhắn tiếp câu nữa (sau 2 phút) -> Lại dừng hẳn nhường nhân viên (NONE)
+        action5, _, _ = self.memory.decide_inbox_action(
             customer_name="Anh Minh",
-            last_message_text="Gửi mẫu qua Zalo số 0909123456 giúp mình nha",
+            last_message_text="Ok mình đợi nha",
             last_sender_is_page=False,
             has_prior_page_messages_in_dom=True,
             thread_id="thread_999",
-            now_ts=t1 + 120,
+            now_ts=t_after_3h + 120,
         )
-        self.assertEqual(action3, "NONE")
-
-        # Nhưng nếu khách im lặng rất lâu (> 120 phút) rồi mới nhắn lại hỏi thăm -> Nhắc lại câu đợi nhân viên 1 lần
-        t_long = t1 + (SILENCE_REMINDER_MINUTES * 60) + 60
-        action4, reply4, _ = self.memory.decide_inbox_action(
-            customer_name="Anh Minh",
-            last_message_text="Alo shop ơi có ai trực không ạ?",
-            last_sender_is_page=False,
-            has_prior_page_messages_in_dom=True,
-            thread_id="thread_999",
-            now_ts=t_long,
-        )
-        self.assertEqual(action4, "WAIT_STAFF_REPLY")
-        self.assertIn("Anh Minh", reply4)
+        self.assertEqual(action5, "NONE", "Sau khi rep WAIT_STAFF_REPLY, bot phải dừng hẳn nhường nhân viên")
 
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+

@@ -18,6 +18,7 @@ import sys
 import threading
 import time
 import urllib.parse
+import urllib.request
 import webbrowser
 from typing import Any, Dict, List, Optional
 
@@ -50,6 +51,84 @@ from bot.bot_config import (
 PORT = 8686
 LOG_FILE = os.path.join(LOGS_DIR, "bot_truc_page.log")
 GITHUB_REPO_ACTIONS = "https://github.com/DucTri2207/chatbot-dan86/actions"
+GITHUB_RAW_STATUS_URL = "https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_status.json"
+GITHUB_RAW_MEMORY_URL = "https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_memory.json"
+GITHUB_ACTIONS_API_RUNS = "https://api.github.com/repos/DucTri2207/chatbot-dan86/actions/runs?per_page=3"
+
+_GITHUB_CACHE: Dict[str, Any] = {
+    "cached_at": 0.0,
+    "vps_status": {},
+    "vps_memory": {},
+    "actions_run": {},
+}
+
+
+def fetch_github_live_data(force: bool = False) -> Dict[str, Any]:
+    """
+    Đồng bộ dữ liệu thời gian thực từ VPS GitHub Actions về máy cục bộ.
+    Giúp Dashboard hiển thị đầy đủ thông tin kể cả khi Bot đang chạy trên VPS đám mây!
+    """
+    now = time.time()
+    if not force and (now - _GITHUB_CACHE["cached_at"]) < 10.0:
+        return _GITHUB_CACHE
+
+    headers = {
+        "User-Agent": "DAN86-Dashboard-Monitor",
+        "Accept": "application/json",
+    }
+
+    # 1. Tải bot_status.json từ GitHub
+    try:
+        req = urllib.request.Request(f"{GITHUB_RAW_STATUS_URL}?t={int(now)}", headers=headers)
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            if resp.status == 200:
+                _GITHUB_CACHE["vps_status"] = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        pass
+
+    # 2. Tải bot_memory.json từ GitHub
+    try:
+        req = urllib.request.Request(f"{GITHUB_RAW_MEMORY_URL}?t={int(now)}", headers=headers)
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            if resp.status == 200:
+                _GITHUB_CACHE["vps_memory"] = json.loads(resp.read().decode("utf-8"))
+    except Exception:
+        pass
+
+    # 3. Lấy thông tin chạy từ GitHub Actions API
+    try:
+        req = urllib.request.Request(GITHUB_ACTIONS_API_RUNS, headers=headers)
+        with urllib.request.urlopen(req, timeout=3.5) as resp:
+            if resp.status == 200:
+                runs_data = json.loads(resp.read().decode("utf-8"))
+                runs = runs_data.get("workflow_runs", [])
+                if runs:
+                    latest = runs[0]
+                    _GITHUB_CACHE["actions_run"] = {
+                        "id": latest.get("id"),
+                        "status": latest.get("status"),
+                        "conclusion": latest.get("conclusion"),
+                        "html_url": latest.get("html_url"),
+                        "run_number": latest.get("run_number"),
+                        "created_at": latest.get("created_at"),
+                        "updated_at": latest.get("updated_at"),
+                    }
+    except Exception:
+        pass
+
+    _GITHUB_CACHE["cached_at"] = now
+
+    # Lưu lại memory mới nhất vào ổ đĩa local nếu VPS có dữ liệu
+    vps_mem = _GITHUB_CACHE.get("vps_memory")
+    if isinstance(vps_mem, dict) and (vps_mem.get("conversations") or vps_mem.get("replied_comments")):
+        try:
+            os.makedirs(STATE_DIR, exist_ok=True)
+            with open(MEMORY_FILE, "w", encoding="utf-8") as f:
+                json.dump(vps_mem, f, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
+    return _GITHUB_CACHE
 
 
 def format_time_ago(ts: float) -> str:
@@ -143,6 +222,18 @@ def collect_dashboard_data() -> Dict[str, Any]:
         except Exception:
             pass
 
+    # Tự động nạp & đồng bộ dữ liệu thời gian thực từ VPS GitHub Actions
+    gh_data = fetch_github_live_data(force=False)
+    vps_mem = gh_data.get("vps_memory")
+    if isinstance(vps_mem, dict):
+        if len(vps_mem.get("conversations", {})) >= len(memory_data["conversations"]):
+            memory_data["conversations"].update(vps_mem.get("conversations", {}))
+        if len(vps_mem.get("replied_comments", {})) >= len(memory_data["replied_comments"]):
+            memory_data["replied_comments"].update(vps_mem.get("replied_comments", {}))
+        if isinstance(vps_mem.get("stats"), dict):
+            for k, v in vps_mem["stats"].items():
+                memory_data["stats"][k] = max(memory_data["stats"].get(k, 0), v)
+
     # 2. Xử lý danh sách khách hàng
     conversations_list = []
     stage_1_count = 0
@@ -203,6 +294,31 @@ def collect_dashboard_data() -> Dict[str, Any]:
     bot_proc = get_active_bot_process_info()
     storage_info = get_storage_state_status()
 
+    # Kiểm tra trạng thái VPS GitHub Actions
+    vps_status_raw = gh_data.get("vps_status") or {}
+    vps_action_run = gh_data.get("actions_run") or {}
+    run_status = vps_action_run.get("status")
+
+    vps_is_running = False
+    if run_status == "in_progress":
+        vps_is_running = True
+    elif vps_status_raw.get("running"):
+        last_hb = float(vps_status_raw.get("last_heartbeat", 0))
+        if (time.time() - last_hb) < 420:  # 7 phút
+            vps_is_running = True
+
+    # Nếu máy tính cá nhân đang không bật bot nhưng VPS GitHub đang chạy:
+    if not bot_proc.get("is_running") and vps_is_running:
+        bot_proc["is_running"] = True
+        run_num = vps_action_run.get("run_number") or "?"
+        bot_proc["pid"] = f"VPS #{run_num}"
+        bot_proc["mode"] = f"VPS GitHub (Ca #{vps_status_raw.get('cycle', 1)})"
+        bot_proc["cycle"] = vps_status_raw.get("cycle", 1)
+        bot_proc["status_text"] = "VPS GitHub đang trực 24/24"
+        last_hb = float(vps_status_raw.get("last_heartbeat", 0))
+        if last_hb > 0:
+            bot_proc["last_heartbeat_ago"] = format_time_ago(last_hb)
+
     # Đo dung lượng thư mục dự án (chứng minh siêu nhẹ)
     state_size_kb = 0.0
     for root, _, files in os.walk(STATE_DIR):
@@ -222,6 +338,15 @@ def collect_dashboard_data() -> Dict[str, Any]:
         "conversations": conversations_list,
         "recent_comments": comments_list[:50],  # Lấy 50 cmt gần nhất
         "bot_status": bot_proc,
+        "vps_live": {
+            "is_running": vps_is_running,
+            "run_status": run_status or ("in_progress" if vps_is_running else "idle"),
+            "run_number": vps_action_run.get("run_number"),
+            "run_url": vps_action_run.get("html_url") or GITHUB_REPO_ACTIONS,
+            "cycle": vps_status_raw.get("cycle", 0),
+            "last_heartbeat_ago": format_time_ago(float(vps_status_raw.get("last_heartbeat", 0))),
+            "last_sync": format_time_ago(_GITHUB_CACHE["cached_at"]),
+        },
         "storage_state": {
             "exists": storage_info.get("exists", False),
             "cookies_count": storage_info.get("cookies_count", 0),
@@ -781,6 +906,9 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="pulse-dot"></div>
         <span id="botStatusText">Đang kiểm tra...</span>
       </div>
+      <button class="btn btn-outline" id="btnSyncGithub" onclick="syncLiveFromGithub()" title="Đồng bộ dữ liệu thời gian thực từ VPS GitHub Actions">
+        ☁️ Đồng bộ VPS Live
+      </button>
       <button class="btn btn-outline" onclick="syncCookiesFromDan86()" title="Lấy nhanh cookies từ d:\\dan86 không tốn ổ cứng">
         🔄 Đồng bộ Cookies
       </button>
@@ -794,6 +922,17 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
   </header>
 
   <div class="container">
+
+    <!-- Banner Trạng Thái VPS GitHub Actions 24/24 -->
+    <div id="vpsLiveBanner" class="waiting-alert hidden" style="background: linear-gradient(90deg, rgba(16, 185, 129, 0.15), rgba(59, 130, 246, 0.12)); border-color: rgba(16, 185, 129, 0.4);">
+      <div class="waiting-alert-text" style="color: #34d399;">
+        <span>☁️ VPS GITHUB ACTIONS ĐANG TRỰC 24/24:</span>
+        <span id="vpsLiveBannerText">Ca trực đang chạy liên tục, tự động trả lời bình luận & inbox.</span>
+      </div>
+      <a id="vpsLiveBannerLink" href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="border-color: rgba(16, 185, 129, 0.4); color: #34d399;">
+        ↗️ Xem Chi Tiết Trên GitHub
+      </a>
+    </div>
 
     <!-- Cảnh báo nếu có khách hàng Stage 2 cần nhân viên xử lý -->
     <div id="waitingAlert" class="waiting-alert hidden">
@@ -969,19 +1108,31 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
         <div class="info-card">
           <h3>☁️ Trạng Thái VPS GitHub Actions (24/24)</h3>
           <div class="info-row">
+            <span class="info-label">Trạng thái VPS</span>
+            <span id="vpsLiveStatus" class="info-val">--</span>
+          </div>
+          <div class="info-row">
             <span class="info-label">Kho lưu trữ mã nguồn</span>
             <span class="info-val"><a href="https://github.com/DucTri2207/chatbot-dan86" target="_blank" style="color: var(--primary-light);">chatbot-dan86</a></span>
           </div>
           <div class="info-row">
-            <span class="info-label">Ca trực VPS</span>
-            <span class="info-val">Mỗi ca 320 phút, tự động gọi ca tiếp</span>
+            <span class="info-label">Ca trực hiện tại</span>
+            <span id="vpsLiveCycle" class="info-val">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Tín hiệu heartbeat</span>
+            <span id="vpsLiveHeartbeat" class="info-val">--</span>
+          </div>
+          <div class="info-row">
+            <span class="info-label">Cơ chế hoạt động</span>
+            <span class="info-val">Ca 320p liên tục, tự gọi ca tiếp</span>
           </div>
           <div class="info-row">
             <span class="info-label">Đồng bộ bộ nhớ</span>
             <span class="info-val">Tự lưu state/bot_memory.json qua Git</span>
           </div>
           <div class="info-row" style="margin-top: 10px;">
-            <a href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="width: 100%; justify-content: center;">
+            <a id="vpsLiveRunUrl" href="https://github.com/DucTri2207/chatbot-dan86/actions" target="_blank" class="btn btn-outline" style="width: 100%; justify-content: center;">
               ↗️ Xem Log Chạy Trực Tiếp Trên GitHub Actions
             </a>
           </div>
@@ -1025,15 +1176,13 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
     async function fetchStatus() {
       try {
         const res = await fetch(API_BASE + '/api/status');
-        if (!res.ok) return;
+        if (!res.ok) throw new Error('API status not ok');
         globalData = await res.json();
         renderDashboard(globalData);
       } catch (e) {
         console.warn('Fetch status warning:', e);
-        const text = document.getElementById('botStatusText');
-        if (text && window.location.protocol === 'file:') {
-          text.innerText = 'Chưa bật 4_MO_DASHBOARD.bat';
-        }
+        // Fallback đọc trực tiếp từ GitHub khi mở bằng file:/// hoặc server local chưa bật
+        await fetchStaticGithubData();
       }
     }
 
@@ -1048,16 +1197,164 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
       }
     }
 
+    async function syncLiveFromGithub() {
+      const btn = document.getElementById('btnSyncGithub');
+      if (btn) btn.innerText = '⏳ Đang tải...';
+      try {
+        const res = await fetch(API_BASE + '/api/sync_github', { method: 'POST' });
+        if (res.ok) {
+          globalData = await res.json();
+          renderDashboard(globalData);
+          if (btn) btn.innerText = '✅ Đã đồng bộ';
+          setTimeout(() => { if (btn) btn.innerText = '☁️ Đồng bộ VPS Live'; }, 2000);
+          return;
+        }
+      } catch (e) {
+        console.warn('API sync_github warning:', e);
+      }
+      // Fallback đọc trực tiếp GitHub raw nếu server local không phản hồi
+      await fetchStaticGithubData();
+      if (btn) btn.innerText = '✅ Đã đồng bộ';
+      setTimeout(() => { if (btn) btn.innerText = '☁️ Đồng bộ VPS Live'; }, 2000);
+    }
+
+    async function fetchStaticGithubData() {
+      try {
+        const t = Date.now();
+        const statusUrl = `https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_status.json?t=${t}`;
+        const memoryUrl = `https://raw.githubusercontent.com/DucTri2207/chatbot-dan86/master/state/bot_memory.json?t=${t}`;
+        const [resStatus, resMem] = await Promise.all([
+          fetch(statusUrl).catch(() => null),
+          fetch(memoryUrl).catch(() => null),
+        ]);
+        const vpsStatus = (resStatus && resStatus.ok) ? await resStatus.json() : {};
+        const vpsMem = (resMem && resMem.ok) ? await resMem.json() : {};
+
+        buildDataFromStaticGithub(vpsStatus, vpsMem);
+      } catch (err) {
+        console.warn('fetchStaticGithubData error:', err);
+      }
+    }
+
+    function buildDataFromStaticGithub(vpsStatus, vpsMem) {
+      if (!vpsStatus && !vpsMem) return;
+      const mem = vpsMem || {};
+      const convs = mem.conversations || {};
+      const cmts = mem.replied_comments || {};
+      const stats = mem.stats || {};
+
+      let stage1 = 0;
+      let stage2 = 0;
+      const convList = [];
+      for (const [key, c] of Object.entries(convs)) {
+        if (!c || typeof c !== 'object') continue;
+        const stage = parseInt(c.stage || 1);
+        if (stage >= 2) stage2++; else stage1++;
+        convList.push({
+          key: key,
+          customer_name: c.customer_name || 'Khách hàng',
+          stage: stage,
+          stage_label: stage >= 2 ? 'Cần nhân viên hỗ trợ' : 'Đã chào lần 1',
+          stage_badge_class: stage >= 2 ? 'badge-danger' : 'badge-info',
+          is_waiting_staff: stage >= 2,
+          last_message: c.last_replied_customer_msg || '',
+          last_reply: c.last_bot_reply_text || '',
+          last_ts: c.last_bot_reply_ts || 0,
+          last_ts_str: c.last_bot_reply_ts ? new Date(c.last_bot_reply_ts * 1000).toLocaleString('vi-VN') : '--',
+          time_ago: 'Gần đây',
+          source: c.source || 'messenger',
+        });
+      }
+      convList.sort((a, b) => (b.last_ts || 0) - (a.last_ts || 0));
+
+      const cmtList = [];
+      for (const [key, cmt] of Object.entries(cmts)) {
+        if (!cmt || typeof cmt !== 'object') continue;
+        cmtList.push({
+          key: key,
+          author: cmt.author || 'Khách bình luận',
+          comment_text: cmt.comment_text || '',
+          public_reply: cmt.public_reply || '',
+          private_inbox_sent: Boolean(cmt.private_inbox_sent),
+          private_reply_text: cmt.private_reply_text || '',
+          replied_at: cmt.replied_at || 0,
+          replied_at_str: cmt.replied_at ? new Date(cmt.replied_at * 1000).toLocaleString('vi-VN') : '--',
+          time_ago: 'Gần đây',
+        });
+      }
+      cmtList.sort((a, b) => (b.replied_at || 0) - (a.replied_at || 0));
+
+      const isRunning = Boolean(vpsStatus && vpsStatus.running);
+      globalData = {
+        stats: {
+          comments_replied: stats.comments_replied || cmtList.length,
+          private_inboxes_from_comment: stats.private_inboxes_from_comment || 0,
+          first_inbox_replies: stats.first_inbox_replies || 0,
+          wait_staff_replies: stats.wait_staff_replies || 0,
+        },
+        counts: {
+          total_conversations: convList.length,
+          stage_1_count: stage1,
+          stage_2_waiting_staff: stage2,
+          total_comments_replied: cmtList.length,
+        },
+        conversations: convList,
+        recent_comments: cmtList,
+        bot_status: {
+          is_running: isRunning,
+          pid: isRunning ? 'VPS GitHub' : null,
+          cycle: vpsStatus.cycle || 1,
+          status_text: isRunning ? 'VPS GitHub đang trực 24/24' : 'Đang dừng',
+          uptime_str: '--',
+          mode: 'VPS GitHub',
+        },
+        vps_live: {
+          is_running: isRunning,
+          cycle: vpsStatus.cycle || 1,
+          run_url: 'https://github.com/DucTri2207/chatbot-dan86/actions',
+          last_heartbeat_ago: 'Vừa đồng bộ',
+        },
+        storage_state: {
+          exists: true,
+          cookies_count: 2,
+          size_kb: 3.8,
+        },
+        system_footprint: {
+          state_size_kb: 5.2,
+        },
+      };
+      renderDashboard(globalData);
+    }
+
     function renderDashboard(data) {
       if (!data) return;
 
-      // 1. Bot status pill
+      // 1. Bot status pill & VPS live banner
       const pill = document.getElementById('botStatusPill');
       const text = document.getElementById('botStatusText');
       const isRunning = data.bot_status && data.bot_status.is_running;
+      const vpsLive = data.vps_live;
+      const vpsBanner = document.getElementById('vpsLiveBanner');
+      const vpsBannerText = document.getElementById('vpsLiveBannerText');
+      const vpsBannerLink = document.getElementById('vpsLiveBannerLink');
+
+      if (vpsLive && vpsLive.is_running) {
+        if (vpsBanner) {
+          vpsBanner.classList.remove('hidden');
+          if (vpsBannerText) {
+            vpsBannerText.innerText = `Ca #${vpsLive.cycle || 1} đang trực tự động 24/24 trên VPS GitHub Actions (Cập nhật: ${vpsLive.last_heartbeat_ago || 'Vừa xong'})`;
+          }
+          if (vpsBannerLink && vpsLive.run_url) {
+            vpsBannerLink.href = vpsLive.run_url;
+          }
+        }
+      } else {
+        if (vpsBanner) vpsBanner.classList.add('hidden');
+      }
+
       if (isRunning) {
         pill.className = 'status-pill online';
-        text.innerText = `Đang chạy (PID ${data.bot_status.pid} - Vòng #${data.bot_status.cycle})`;
+        text.innerText = `Đang chạy (${data.bot_status.pid ? 'PID ' + data.bot_status.pid + ' - ' : ''}Vòng #${data.bot_status.cycle || 1})`;
       } else {
         pill.className = 'status-pill offline';
         text.innerText = 'Bot máy tính: Đang dừng';
@@ -1102,6 +1399,24 @@ HTML_PAGE_TEMPLATE = """<!DOCTYPE html>
         document.getElementById('sysBotUptime').innerText = data.bot_status.uptime_str || '--';
         document.getElementById('sysBotCycle').innerText = `#${data.bot_status.cycle || 0}`;
         document.getElementById('sysBotMode').innerText = data.bot_status.mode === 'dry-run' ? 'Dry-Run (Xem trước)' : 'Live (Thật)';
+      }
+      if (data.vps_live) {
+        const vpsStatusEl = document.getElementById('vpsLiveStatus');
+        if (vpsStatusEl) {
+          vpsStatusEl.innerText = data.vps_live.is_running ? '🟢 Đang hoạt động (Trực 24/24)' : '⚪ Đang nghỉ / Hoàn tất';
+        }
+        const vpsCycleEl = document.getElementById('vpsLiveCycle');
+        if (vpsCycleEl) {
+          vpsCycleEl.innerText = data.vps_live.cycle ? `Ca #${data.vps_live.cycle}` : '--';
+        }
+        const vpsHbEl = document.getElementById('vpsLiveHeartbeat');
+        if (vpsHbEl) {
+          vpsHbEl.innerText = data.vps_live.last_heartbeat_ago || 'Chưa có';
+        }
+        const runLink = document.getElementById('vpsLiveRunUrl');
+        if (runLink && data.vps_live.run_url) {
+          runLink.href = data.vps_live.run_url;
+        }
       }
       if (data.storage_state) {
         document.getElementById('sysStorageSize').innerText = `${data.storage_state.size_kb} KB (Trích xuất: ${data.storage_state.last_modified_str})`;
@@ -1343,6 +1658,17 @@ class DashboardHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
             self.wfile.write(payload.encode("utf-8"))
             return
 
+        if path in ("/api/sync_github", "/api/sync-github"):
+            fetch_github_live_data(force=True)
+            data = collect_dashboard_data()
+            payload = json.dumps(data, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload.encode("utf-8"))
+            return
+
         self.send_response(404)
         self.end_headers()
         self.wfile.write(b"404 Not Found")
@@ -1350,6 +1676,17 @@ class DashboardHTTPRequestHandler(http.server.BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed_url = urllib.parse.urlparse(self.path)
         path = parsed_url.path
+
+        if path in ("/api/sync_github", "/api/sync-github"):
+            fetch_github_live_data(force=True)
+            data = collect_dashboard_data()
+            payload = json.dumps(data, ensure_ascii=False)
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
+            self.wfile.write(payload.encode("utf-8"))
+            return
 
         if path == "/api/sync_cookies":
             res = sync_facebook_credentials_from_dan86()

@@ -1,0 +1,18 @@
+{
+  "running": false,
+  "pid": 1692,
+  "mode": "dry-run",
+  "cycle": 1,
+  "headless": true,
+  "started_at": 1791705897.5845928,
+  "last_heartbeat": 1791705922.0764847,
+  "last_heartbeat_str": "2026-10-11 15:05:22",
+  "stats": {
+    "comments_replied": 0,
+    "private_inboxes_from_comment": 0,
+    "first_inbox_replies": 0,
+    "wait_staff_replies": 0
+  },
+  "stopped_at": 1791705922.0764847,
+  "stopped_at_str": "2026-10-11 15:05:22"
+}
