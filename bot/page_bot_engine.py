@@ -306,14 +306,20 @@ async def verify_logged_in(page: Page) -> bool:
 
         await page.context.storage_state(path=str(STORAGE_STATE_FILE))
 
-        # Nếu file vừa lưu bị thiếu origins, khôi phục lại origins
+        # Bảo toàn mọi origins quan trọng (đặc biệt business.facebook.com) từ preserved_origins
         try:
             with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_new:
                 new_data = json.load(f_new)
-            if not new_data.get("origins") and preserved_origins:
-                new_data["origins"] = preserved_origins
-                with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f_fix:
-                    json.dump(new_data, f_fix, ensure_ascii=False, indent=2)
+            new_origins_by_dom = {o.get("origin"): o for o in new_data.get("origins", []) if isinstance(o, dict)}
+            for prev_o in preserved_origins:
+                if isinstance(prev_o, dict):
+                    dom = prev_o.get("origin")
+                    if dom:
+                        if dom not in new_origins_by_dom or len(new_origins_by_dom[dom].get("localStorage", [])) < len(prev_o.get("localStorage", [])):
+                            new_origins_by_dom[dom] = prev_o
+            new_data["origins"] = list(new_origins_by_dom.values())
+            with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f_fix:
+                json.dump(new_data, f_fix, ensure_ascii=False, indent=2)
         except Exception:
             pass
 
@@ -444,10 +450,13 @@ async def expand_all_comment_replies(page: Page) -> int:
     expanded_count = 0
     try:
         see_more_selectors = [
+            'button:has-text("Xem"):has-text("phản hồi")',
             'div[role="button"]:has-text("Xem"):has-text("phản hồi")',
             'span:has-text("Xem"):has-text("phản hồi")',
+            'button:has-text("Xem thêm bình luận")',
             'div[role="button"]:has-text("Xem thêm bình luận")',
             'span:has-text("Xem thêm bình luận")',
+            'button:has-text("View"):has-text("repl")',
             'div[role="button"]:has-text("View"):has-text("repl")',
         ]
         for sel in see_more_selectors:
@@ -558,15 +567,17 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             // Kiểm tra xem article này là phản hồi của chính Fanpage
             const isPageReply = lowerAria.includes("dưới tên dần86farm") ||
                                 lowerAria.includes("dưới tên dan86") ||
-                                pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\\n") || lowerInner.includes("tác giả\\n" + p));
+                                pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\n") || lowerInner.includes("tác giả\n" + p));
 
             // Trích xuất tên tác giả
             let authorName = "";
-            const mAria = aria.match(/Bình luận dưới tên\\s+(.+?)(?:\\s+vào\\s+|$)/i) ||
-                          aria.match(/Comment by\\s+(.+?)(?:\\s+ago|\\s+at|\\s+on|$)/i);
+            const mAria = aria.match(/Bình luận dưới tên\s+(.+?)(?:\s+vào\s+|$)/i) ||
+                          aria.match(/Comment by\s+(.+?)(?:\s+ago|\s+at|\s+on|$)/i);
             if (mAria && mAria[1]) {
                 authorName = mAria[1].trim();
             }
+
+            const lines = inner.split('\n').map(s => s.trim()).filter(Boolean);
 
             if (!authorName || isSystemString(authorName)) {
                 const authorBtn = art.querySelector('div[role="button"]:not([aria-label]), a[role="link"], span[dir="auto"]');
@@ -579,7 +590,6 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
 
             if (!authorName || isSystemString(authorName)) {
-                const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
                 for (const line of lines) {
                     if (!isSystemString(line) && line.length >= 2 && line.length <= 50 && !line.includes('tuần') && !line.includes('ngày') && !line.includes('phút') && !line.includes('giờ') && line !== '·') {
                         authorName = line;
@@ -588,25 +598,36 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 }
             }
 
-            // Kiểm tra dấu thời gian và phát hiện bình luận cũ (tuần, tháng, năm, > 3 ngày)
-            const combinedTimeInfo = (aria + " " + inner).toLowerCase();
+            // Trích xuất dấu thời gian độc lập để kiểm tra bình luận cũ (tránh lọc nhầm nội dung khách)
+            let timeStr = "";
+            const tAria = aria.match(/(?:vào|at|on)\s+(.+?)(?:$)/i);
+            if (tAria && tAria[1]) {
+                timeStr = tAria[1].trim();
+            }
+            if (!timeStr) {
+                const timeLine = lines.find(l => /^\s*\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*$/i.test(l.trim()) || /^(?:vừa xong|just now|hôm qua|yesterday)$/i.test(l.trim()));
+                if (timeLine) {
+                    timeStr = timeLine.trim();
+                }
+            }
+
+            const checkTime = (timeStr || aria).toLowerCase();
             let isOldComment = false;
 
             // Kiểm tra các mốc thời gian cũ: tuần, tháng, năm
-            if (/(\d+)\s*(tuần|tháng|năm|w|y|weeks?|months?|years?)\b/i.test(combinedTimeInfo) ||
-                combinedTimeInfo.includes("năm trước") || combinedTimeInfo.includes("tháng trước") || combinedTimeInfo.includes("tuần trước") ||
-                combinedTimeInfo.includes("years ago") || combinedTimeInfo.includes("months ago") || combinedTimeInfo.includes("weeks ago")) {
+            if (/(\d+)\s*(tuần|tháng|năm|w|y|weeks?|months?|years?)\b/i.test(checkTime) ||
+                checkTime.includes("năm trước") || checkTime.includes("tháng trước") || checkTime.includes("tuần trước") ||
+                checkTime.includes("years ago") || checkTime.includes("months ago") || checkTime.includes("weeks ago")) {
                 isOldComment = true;
             }
 
             // Kiểm tra nếu là ngày nhưng > 3 ngày
-            const dayMatch = combinedTimeInfo.match(/(\d+)\s*(ngày|days?)\b/i);
+            const dayMatch = checkTime.match(/(\d+)\s*(ngày|days?)\b/i);
             if (dayMatch && parseInt(dayMatch[1], 10) > 3) {
                 isOldComment = true;
             }
 
             // Trích xuất nội dung bình luận (cho phép bình luận 1 ký tự, icon, số, chữ ngắn)
-            const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
             const contentLines = lines.filter(l => {
                 const low = l.toLowerCase();
                 if (l === authorName || low.includes('tuần') || low.includes('ngày') || low.includes('phút') || low.includes('giờ') || l === '·') return false;
@@ -630,8 +651,11 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 commentText = ".";
             }
 
-            // Kiểm tra nút Trả lời / Phản hồi & Nút Nhắn tin
-            const candidateEls = Array.from(art.querySelectorAll('button, [role="button"], a[role="link"], [role="link"], span, div'));
+            // Kiểm tra nút Trả lời / Phản hồi & Nút Nhắn tin (Ưu tiên các phần tử bấm được)
+            const candidateEls = Array.from(art.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
+            if (candidateEls.length === 0) {
+                candidateEls.push(...Array.from(art.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
+            }
             const rBtn = candidateEls.find(isReplyBtn);
             const mBtn = candidateEls.find(isMsgBtn);
 
@@ -639,6 +663,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 domIndex: allArticles.indexOf(art),
                 isPageReply: isPageReply,
                 isOldComment: isOldComment,
+                timeStr: timeStr,
                 authorName: authorName || "bạn",
                 commentText: commentText,
                 hasReplyBtn: !!rBtn,
@@ -680,7 +705,10 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
 
         if (targetArticleNode) {
             targetArticleNode.setAttribute('data-dan86-reply-target', 'true');
-            const candidateEls = Array.from(targetArticleNode.querySelectorAll('button, [role="button"], a[role="link"], [role="link"], span, div'));
+            const candidateEls = Array.from(targetArticleNode.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
+            if (candidateEls.length === 0) {
+                candidateEls.push(...Array.from(targetArticleNode.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
+            }
             const rBtn = candidateEls.find(isReplyBtn);
             if (rBtn) {
                 const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
@@ -700,6 +728,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             dom_index: c.domIndex,
             author_name: c.authorName,
             comment_text: c.commentText,
+            time_str: c.timeStr || "",
             is_old_comment: c.isOldComment,
             has_reply_btn: c.hasReplyBtn,
             has_msg_btn: !!c.msgBtnText,
@@ -795,7 +824,10 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
                    combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
         };
 
-        const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], [role="link"], span, div'));
+        const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
+        if (candidateEls.length === 0) {
+            candidateEls.push(...Array.from(target.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
+        }
         const rBtn = candidateEls.find(isReplyBtn);
         if (rBtn) {
             const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
@@ -1008,7 +1040,10 @@ async def send_private_inbox_to_commenter(
                        combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
             };
 
-            const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], [role="link"], span, div'));
+            const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
+            if (candidateEls.length === 0) {
+                candidateEls.push(...Array.from(target.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
+            }
             const btn = candidateEls.find(isMsgBtn);
             if (btn) {
                 const clickNode = btn.closest('button, [role="button"], a') || btn;
@@ -1219,8 +1254,8 @@ async def process_facebook_comments_tab(
                         continue
 
                     # BỎ QUA 100% nếu bình luận cũ (tuần, tháng, năm hoặc > 3 ngày)
-                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand_text, cand.get("innerPreview", "")):
-                        logger.info("Bình luận cũ từ [%s] ('%s'). BỎ QUA 100%!", cand_author, cand_text[:40])
+                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand.get("time_str", ""), cand.get("innerPreview", "")):
+                        logger.info("Bình luận cũ từ [%s] (Thời gian: '%s'). BỎ QUA 100%!", cand_author, cand.get("time_str", "") or cand.get("innerPreview", "")[:30])
                         continue
 
                     should_rep, comment_key = memory.should_reply_comment(

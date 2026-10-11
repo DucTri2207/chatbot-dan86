@@ -486,6 +486,78 @@ class TestDan86BotLogic(unittest.TestCase):
         )
         self.assertTrue(should_rep_3, "Khách cũ bình luận trên bài khác phải được rep!")
 
+    def test_10_origins_preservation_and_secret_safety(self) -> None:
+        """Đảm bảo origins (business.facebook.com) luôn được bảo toàn, không bị ghi đè làm mất phiên SSO."""
+        import json
+        from bot.auth_helper import export_github_secret_file, sync_facebook_credentials_from_dan86
+
+        temp_storage = os.path.join(self.temp_dir.name, "fb_storage_state.json")
+        temp_secret = os.path.join(self.temp_dir.name, "GITHUB_SECRET_VALUE.txt")
+        temp_source = os.path.join(self.temp_dir.name, "source_cookies.json")
+
+        # Giả lập state ban đầu đã có origins chứa business.facebook.com
+        biz_origin = {
+            "origin": "https://business.facebook.com",
+            "localStorage": [{"name": "sso_token", "value": "xyz123"}],
+        }
+        initial_state = {
+            "cookies": [
+                {"name": "c_user", "value": "12345", "domain": ".facebook.com", "path": "/"},
+                {"name": "xs", "value": "secretxs", "domain": ".facebook.com", "path": "/"},
+            ],
+            "origins": [biz_origin],
+        }
+        with open(temp_storage, "w", encoding="utf-8") as f:
+            json.dump(initial_state, f)
+
+        # Giả lập file source d:\dan86 chỉ có cookies và origins: []
+        source_data = [
+            {"name": "c_user", "value": "12345", "domain": ".facebook.com", "path": "/"},
+            {"name": "xs", "value": "secretxs", "domain": ".facebook.com", "path": "/"},
+        ]
+        with open(temp_source, "w", encoding="utf-8") as f:
+            json.dump(source_data, f)
+
+        # Chạy sync không có CDP -> Phải bảo toàn origins hiện có, không lấy origins rỗng từ source đè lên
+        res = sync_facebook_credentials_from_dan86(
+            source_path=temp_source,
+            storage_path=temp_storage,
+            secret_path=temp_secret,
+            use_cdp=False,
+        )
+        self.assertTrue(res.get("success"))
+
+        with open(temp_storage, "r", encoding="utf-8") as f_res:
+            res_state = json.load(f_res)
+        has_biz = any("business.facebook.com" in o.get("origin", "") for o in res_state.get("origins", []))
+        self.assertTrue(has_biz, "origins của business.facebook.com bắt buộc phải được bảo toàn!")
+
+        # Kiểm tra export_github_secret_file không làm mất origins
+        export_github_secret_file(temp_storage, temp_secret)
+        import base64
+        with open(temp_secret, "r", encoding="utf-8") as f_sec:
+            sec_raw = f_sec.read().strip()
+        sec_json = json.loads(base64.b64decode(sec_raw).decode("utf-8"))
+        sec_has_biz = any("business.facebook.com" in o.get("origin", "") for o in sec_json.get("origins", []))
+        self.assertTrue(sec_has_biz, "GITHUB_SECRET_VALUE.txt bắt buộc phải lưu đầy đủ business.facebook.com origins!")
+
+    def test_11_customer_inquiry_with_year_month_not_rejected(self) -> None:
+        """Đảm bảo khách hỏi mua set quà kỷ niệm 1 năm / 1 tháng KHÔNG bị lọc nhầm thành cmt cũ."""
+        from bot.page_bot_engine import is_old_comment_timestamp
+
+        # Khách hỏi set quà kỷ niệm 1 năm, nhưng timestamp đăng là "1 giờ trước"
+        customer_text = "Shop ơi tư vấn set quà kỷ niệm 1 năm thành lập công ty với"
+        time_str_new = "1 giờ trước"
+        time_str_old = "3 tuần trước"
+
+        # Nếu dùng time_str để lọc:
+        self.assertFalse(is_old_comment_timestamp(time_str_new))
+        self.assertTrue(is_old_comment_timestamp(time_str_old))
+
+        # Tiền tố thời gian được cắt bỏ sạch, nhưng nội dung khách hỏi "1 năm" ở giữa câu vẫn giữ nguyên
+        from bot.page_bot_engine import clean_comment_text
+        self.assertEqual(clean_comment_text("1 giờ " + customer_text), customer_text)
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

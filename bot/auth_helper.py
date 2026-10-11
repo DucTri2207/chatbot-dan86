@@ -347,6 +347,43 @@ def sync_facebook_credentials_from_dan86(
         except Exception as e_read:
             logger.debug("Lỗi đọc state hiện tại trong %s: %s", storage_path, e_read)
 
+    # Nếu storage_path chưa có phiên hợp lệ, kiểm tra xem secret_path hoặc FB_STORAGE_STATE có lưu phiên chuẩn không
+    if not has_valid_existing_session:
+        for backup_src in [secret_path, os.environ.get("FB_STORAGE_STATE", "").strip()]:
+            if not backup_src:
+                continue
+            try:
+                b_raw = ""
+                if backup_src == secret_path and os.path.exists(secret_path):
+                    with open(secret_path, "r", encoding="utf-8") as f_b:
+                        b_raw = f_b.read().strip()
+                elif backup_src != secret_path:
+                    b_raw = backup_src
+                if b_raw:
+                    if b_raw.startswith("{"):
+                        b_data = json.loads(b_raw)
+                    else:
+                        b_data = json.loads(base64.b64decode(b_raw).decode("utf-8"))
+                    if isinstance(b_data, dict):
+                        b_origins = b_data.get("origins", [])
+                        b_cookies = b_data.get("cookies", [])
+                        b_cookie_names = {c.get("name") for c in b_cookies if isinstance(c, dict)}
+                        b_has_biz = any(
+                            "business.facebook.com" in org.get("origin", "") and len(org.get("localStorage", [])) > 0
+                            for org in b_origins if isinstance(org, dict)
+                        )
+                        if "c_user" in b_cookie_names and "xs" in b_cookie_names and b_has_biz:
+                            existing_origins = b_origins
+                            if not existing_cookies:
+                                existing_cookies = b_cookies
+                            has_valid_existing_session = True
+                            # Khôi phục ngay vào storage_path
+                            with open(storage_path, "w", encoding="utf-8") as f_res:
+                                json.dump(b_data, f_res, ensure_ascii=False, indent=2)
+                            break
+            except Exception as e_sec_chk:
+                logger.debug("Không thể đọc origins từ nguồn backup %s: %s", backup_src[:30], e_sec_chk)
+
     # 1. Thử trích xuất cookies thời gian thực từ cửa sổ Chrome đang mở qua CDP (khi dùng file nguồn mặc định)
     matched: List[Dict[str, Any]] = []
     meta: Dict[str, Any] = {}
@@ -462,6 +499,24 @@ def export_github_secret_file(
             data = json.load(f)
 
         # Làm sạch localStorage trong origins để loại bỏ rác telemetry/analytics của Facebook
+        if isinstance(data, dict):
+            cur_has_biz = any(
+                "business.facebook.com" in org.get("origin", "") and len(org.get("localStorage", [])) > 0
+                for org in data.get("origins", []) if isinstance(org, dict)
+            )
+            if not cur_has_biz and os.path.exists(secret_path):
+                try:
+                    with open(secret_path, "r", encoding="utf-8") as f_ex_sec:
+                        s_raw = f_ex_sec.read().strip()
+                    if s_raw:
+                        s_data = json.loads(s_raw) if s_raw.startswith("{") else json.loads(base64.b64decode(s_raw).decode("utf-8"))
+                        if isinstance(s_data, dict):
+                            biz_origins = [o for o in s_data.get("origins", []) if "business.facebook.com" in o.get("origin", "") and len(o.get("localStorage", [])) > 0]
+                            if biz_origins:
+                                data["origins"] = list(data.get("origins", [])) + biz_origins
+                except Exception:
+                    pass
+
         if isinstance(data, dict) and "origins" in data:
             cleaned_origins = []
             for org in data.get("origins", []):
