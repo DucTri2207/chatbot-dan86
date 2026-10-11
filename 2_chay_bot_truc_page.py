@@ -56,6 +56,16 @@ def update_bot_heartbeat(
 ) -> None:
     """Ghi nhận trạng thái sống của Bot ra state/bot_status.json cho Dashboard theo dõi."""
     os.makedirs(STATE_DIR, exist_ok=True)
+    recent_logs = []
+    log_file = os.path.join(LOGS_DIR, "bot_truc_page.log")
+    if os.path.exists(log_file):
+        try:
+            with open(log_file, "r", encoding="utf-8", errors="replace") as lf:
+                lines = lf.readlines()
+            recent_logs = [ln.rstrip() for ln in lines[-60:] if ln.strip()]
+        except Exception:
+            pass
+
     payload = {
         "running": running,
         "pid": pid or os.getpid(),
@@ -66,6 +76,7 @@ def update_bot_heartbeat(
         "last_heartbeat": time.time(),
         "last_heartbeat_str": time.strftime("%Y-%m-%d %H:%M:%S"),
         "stats": stats or {},
+        "recent_logs": recent_logs,
     }
     if not running:
         payload["stopped_at"] = time.time()
