@@ -279,6 +279,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Dạ chào Hang Tran ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
       "replied_at": 1791729255.8083353
+    },
+    "cmt:625771756641527:6:adec515561492b7f": {
+      "author": "Nhiệm Vũ",
+      "comment_text": "1 năm .",
+      "public_reply": "Dạ chào Nhiệm Vũ! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Cần hỗ trợ gấp bạn liên hệ Hotline/Zalo: 0933 133 516 nhé! 🌾",
+      "private_inbox_sent": true,
+      "private_reply_text": "Xin chào Nhiệm Vũ! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\nShop xin gửi thông tin để bạn dễ tham khảo:\n✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\nDạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!",
+      "replied_at": 1791729480.6822045
     }
   },
   "conversations": {
@@ -415,11 +423,18 @@
       "last_replied_customer_msg": "1 năm .",
       "last_bot_reply_ts": 1791729255.8083353,
       "source": "comment_private_reply"
+    },
+    "name:nhiệm vũ": {
+      "customer_name": "Nhiệm Vũ",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm .",
+      "last_bot_reply_ts": 1791729480.6822045,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 34,
-    "private_inboxes_from_comment": 19,
+    "comments_replied": 35,
+    "private_inboxes_from_comment": 20,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
