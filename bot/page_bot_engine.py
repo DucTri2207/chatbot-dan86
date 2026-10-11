@@ -16,6 +16,7 @@ import json
 import logging
 import os
 import random
+import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -24,6 +25,7 @@ from playwright.async_api import Browser, BrowserContext, Locator, Page, Playwri
 from bot.bot_config import (
     ACTION_COOLDOWN_SECONDS,
     CHROME_PROFILE_DIR,
+    GITHUB_SECRET_EXPORT_FILE,
     LOGS_DIR,
     MAX_THREADS_PER_CYCLE,
     META_INBOX_COMMENTS_URL,
@@ -42,27 +44,55 @@ logger = logging.getLogger("dan86_page_bot")
 def restore_storage_state_from_env() -> bool:
     """
     Khôi phục file state/fb_storage_state.json từ biến môi trường FB_STORAGE_STATE
-    (dùng khi chạy tự động trên VPS GitHub Actions).
+    (dùng khi chạy tự động trên VPS GitHub Actions) hoặc tự khôi phục từ GITHUB_SECRET_VALUE.txt.
     """
+    os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
     env_b64 = os.environ.get("FB_STORAGE_STATE", "").strip()
-    if not env_b64:
-        return os.path.exists(STORAGE_STATE_FILE)
 
-    os.makedirs(os.path.dirname(STORAGE_STATE_FILE), exist_ok=True)
-    try:
-        # Hỗ trợ cả chuỗi JSON trực tiếp hoặc chuỗi Base64
-        if env_b64.startswith("{"):
-            raw_json = env_b64
-        else:
-            raw_json = base64.b64decode(env_b64).decode("utf-8")
-        parsed = json.loads(raw_json)
-        with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f:
-            json.dump(parsed, f, ensure_ascii=False, indent=2)
-        logger.info("Đã khôi phục phiên đăng nhập Facebook từ FB_STORAGE_STATE.")
-        return True
-    except Exception as e:
-        logger.error("Lỗi giải mã FB_STORAGE_STATE: %s", e)
-        return os.path.exists(STORAGE_STATE_FILE)
+    if env_b64:
+        try:
+            # Hỗ trợ cả chuỗi JSON trực tiếp hoặc chuỗi Base64
+            if env_b64.startswith("{"):
+                raw_json = env_b64
+            else:
+                raw_json = base64.b64decode(env_b64).decode("utf-8")
+            parsed = json.loads(raw_json)
+            with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump(parsed, f, ensure_ascii=False, indent=2)
+            logger.info("Đã khôi phục phiên đăng nhập Facebook từ FB_STORAGE_STATE.")
+            return True
+        except Exception as e:
+            logger.error("Lỗi giải mã FB_STORAGE_STATE: %s", e)
+
+    # Nếu không có biến môi trường, kiểm tra xem file storage hiện tại có đầy đủ cookies và origins không
+    is_storage_valid = False
+    if os.path.exists(STORAGE_STATE_FILE):
+        try:
+            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f:
+                cur_data = json.load(f)
+            c_names = {c.get("name") for c in cur_data.get("cookies", []) if isinstance(c, dict)}
+            has_origins = any("business.facebook.com" in o.get("origin", "") for o in cur_data.get("origins", []) if isinstance(o, dict))
+            if "c_user" in c_names and "xs" in c_names and has_origins:
+                is_storage_valid = True
+        except Exception:
+            pass
+
+    # Nếu file storage chưa hợp lệ nhưng có file GITHUB_SECRET_VALUE.txt lưu trữ phiên chuẩn
+    if not is_storage_valid and os.path.exists(GITHUB_SECRET_EXPORT_FILE):
+        try:
+            with open(GITHUB_SECRET_EXPORT_FILE, "r", encoding="utf-8") as f_sec:
+                sec_b64 = f_sec.read().strip()
+            if sec_b64:
+                sec_json = base64.b64decode(sec_b64).decode("utf-8")
+                sec_parsed = json.loads(sec_json)
+                with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f_out:
+                    json.dump(sec_parsed, f_out, ensure_ascii=False, indent=2)
+                logger.info("Đã tự động khôi phục fb_storage_state.json hoàn chỉnh từ GITHUB_SECRET_VALUE.txt!")
+                return True
+        except Exception as e_sec:
+            logger.warning("Không thể khôi phục từ GITHUB_SECRET_VALUE.txt: %s", e_sec)
+
+    return os.path.exists(STORAGE_STATE_FILE)
 
 
 async def create_bot_browser_context(
@@ -74,15 +104,28 @@ async def create_bot_browser_context(
     os.makedirs(LOGS_DIR, exist_ok=True)
     restore_storage_state_from_env()
 
-    # Tự động nạp cookies từ d:\dan86 nếu chưa có file state cục bộ
-    if not os.path.exists(STORAGE_STATE_FILE):
+    # Kiểm tra xem file storage hiện tại đã đầy đủ c_user, xs và origins chưa
+    need_sync = True
+    if os.path.exists(STORAGE_STATE_FILE):
+        try:
+            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_chk:
+                chk_data = json.load(f_chk)
+            chk_names = {c.get("name") for c in chk_data.get("cookies", []) if isinstance(c, dict)}
+            chk_biz = any("business.facebook.com" in o.get("origin", "") for o in chk_data.get("origins", []) if isinstance(o, dict))
+            if "c_user" in chk_names and "xs" in chk_names and chk_biz:
+                need_sync = False
+        except Exception:
+            pass
+
+    # Chỉ đồng bộ cookies khi chưa có phiên đăng nhập hoàn chỉnh
+    if need_sync:
         try:
             from bot.auth_helper import sync_facebook_credentials_from_dan86
             sync_res = sync_facebook_credentials_from_dan86()
             if sync_res.get("success"):
-                logger.info("Tự động nạp cookies từ d:\\dan86 thành công (%d cookies).", sync_res.get("cookies_count", 0))
+                logger.info("Tự động đồng bộ cookies thành công (%d cookies).", sync_res.get("cookies_count", 0))
         except Exception as e:
-            logger.warning("Không thể tự động nạp cookies từ d:\\dan86: %s", e)
+            logger.warning("Không thể tự động đồng bộ cookies: %s", e)
 
     launch_args = [
         "--disable-blink-features=AutomationControlled",
@@ -251,13 +294,141 @@ async def verify_logged_in(page: Page) -> bool:
     # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
     try:
         from bot.auth_helper import export_github_secret_file
+        # Bảo toàn origins (localStorage business.facebook.com) hiện có
+        preserved_origins = []
+        if os.path.exists(STORAGE_STATE_FILE):
+            try:
+                with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_prev:
+                    p_data = json.load(f_prev)
+                preserved_origins = p_data.get("origins", [])
+            except Exception:
+                pass
+
         await page.context.storage_state(path=str(STORAGE_STATE_FILE))
+
+        # Nếu file vừa lưu bị thiếu origins, khôi phục lại origins
+        try:
+            with open(STORAGE_STATE_FILE, "r", encoding="utf-8") as f_new:
+                new_data = json.load(f_new)
+            if not new_data.get("origins") and preserved_origins:
+                new_data["origins"] = preserved_origins
+                with open(STORAGE_STATE_FILE, "w", encoding="utf-8") as f_fix:
+                    json.dump(new_data, f_fix, ensure_ascii=False, indent=2)
+        except Exception:
+            pass
+
         export_github_secret_file(str(STORAGE_STATE_FILE))
         logger.info("Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!")
     except Exception as e_save:
         logger.warning("Không thể lưu storage_state sau xác thực: %s", e_save)
 
     return True
+
+
+def clean_comment_text(text: str) -> str:
+    """
+    Cắt bỏ sạch tiền tố thời gian khỏi nội dung bình luận:
+    Ví dụ: '1 năm Ib' -> 'Ib'
+           '2 giờ Giá sao bạn' -> 'Giá sao bạn'
+           'vừa xong Cho e xin giá' -> 'Cho e xin giá'
+    """
+    if not text:
+        return ""
+    # Cắt bỏ tiền tố thời gian dạng: '1 năm', '2 tháng', '10 tuần', '3 ngày', '2 giờ', '15 phút', etc.
+    cleaned = re.sub(
+        r'^\s*\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*',
+        '',
+        text,
+        flags=re.IGNORECASE,
+    ).strip()
+    # Cắt bỏ các tiền tố như 'vừa xong', 'just now', 'hôm qua', 'yesterday'
+    cleaned = re.sub(
+        r'^\s*(?:vừa xong|just now|hôm qua|yesterday)\s*',
+        '',
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+    return cleaned if cleaned else text.strip()
+
+
+def is_old_comment_timestamp(text: str, aria: str = "") -> bool:
+    """
+    Kiểm tra xem bình luận có phải là bình luận cũ không:
+    - Bình luận cũ: có dấu thời gian 'tuần', 'tháng', 'năm' (hoặc 'week', 'month', 'year')
+    - Hoặc số ngày > 3 ngày (ví dụ: '4 ngày', '5 ngày', '10 ngày'...).
+    - Chỉ xử lý bình luận MỚI: 'vừa xong', 'phút', 'giờ', 'hôm qua', '1 ngày'..'3 ngày'.
+    """
+    combined = f"{text or ''} {aria or ''}".lower()
+
+    # 1. Tuần, tháng, năm
+    if re.search(r'\b\d+\s*(tuần|tháng|năm|week|month|year)s?\b', combined):
+        return True
+    if any(k in combined for k in [
+        "năm trước", "tháng trước", "tuần trước",
+        "years ago", "months ago", "weeks ago",
+        "1 năm", "2 năm", "3 năm", "4 năm", "5 năm",
+    ]):
+        return True
+
+    # 2. Số ngày > 3
+    day_match = re.search(r'\b(\d+)\s*(ngày|days?)\b', combined)
+    if day_match:
+        try:
+            num_days = int(day_match.group(1))
+            if num_days > 3:
+                return True
+        except ValueError:
+            pass
+
+    return False
+
+
+async def ensure_newest_comments_filter(page: Page) -> bool:
+    """
+    Chuyển chế độ sắp xếp bình luận bài viết sang 'Mới nhất' (Newest) hoặc 'Tất cả bình luận' (All comments).
+    """
+    try:
+        filter_btn_selectors = [
+            'div[role="button"]:has-text("Phù hợp nhất")',
+            'span:has-text("Phù hợp nhất")',
+            'div[role="button"]:has-text("Most relevant")',
+            'span:has-text("Most relevant")',
+            'div[role="button"]:has-text("Bình luận hàng đầu")',
+            'span:has-text("Bình luận hàng đầu")',
+            'div[role="button"]:has-text("Top comments")',
+        ]
+        btn = None
+        for sel in filter_btn_selectors:
+            loc = page.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible():
+                btn = loc
+                break
+
+        if btn is not None:
+            logger.info("Phát hiện bộ lọc bình luận 'Phù hợp nhất', đang chuyển sang 'Mới nhất' / 'Tất cả bình luận'...")
+            await btn.click(timeout=2500)
+            await human_sleep(0.8, 1.5)
+
+            opt_selectors = [
+                'div[role="menuitem"]:has-text("Mới nhất")',
+                'div[role="button"]:has-text("Mới nhất")',
+                'span:has-text("Mới nhất")',
+                'div[role="menuitem"]:has-text("Newest")',
+                'div[role="menuitem"]:has-text("Tất cả bình luận")',
+                'div[role="button"]:has-text("Tất cả bình luận")',
+                'span:has-text("Tất cả bình luận")',
+                'div[role="menuitem"]:has-text("All comments")',
+            ]
+            for o_sel in opt_selectors:
+                o_loc = page.locator(o_sel).first
+                if await o_loc.count() > 0 and await o_loc.is_visible():
+                    await o_loc.click(timeout=2500)
+                    await human_sleep(1.5, 2.5)
+                    logger.info("Đã chuyển bộ lọc bình luận thành công: %s", o_sel)
+                    return True
+    except Exception as e:
+        logger.debug("Không thể đổi bộ lọc bình luận: %s", e)
+    return False
 
 
 # ==============================================================================
@@ -312,7 +483,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
       + data-dan86-reply-btn: nút Trả lời lồng nhau (Reply)
       + data-dan86-msg-btn: nút Nhắn tin / See Chat riêng
     """
-    js_code = """
+    js_code = r"""
     (pageNames) => {
         const blacklist = [
             "chỉ báo trạng thái online",
@@ -417,6 +588,23 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 }
             }
 
+            // Kiểm tra dấu thời gian và phát hiện bình luận cũ (tuần, tháng, năm, > 3 ngày)
+            const combinedTimeInfo = (aria + " " + inner).toLowerCase();
+            let isOldComment = false;
+
+            // Kiểm tra các mốc thời gian cũ: tuần, tháng, năm
+            if (/(\d+)\s*(tuần|tháng|năm|w|y|weeks?|months?|years?)\b/i.test(combinedTimeInfo) ||
+                combinedTimeInfo.includes("năm trước") || combinedTimeInfo.includes("tháng trước") || combinedTimeInfo.includes("tuần trước") ||
+                combinedTimeInfo.includes("years ago") || combinedTimeInfo.includes("months ago") || combinedTimeInfo.includes("weeks ago")) {
+                isOldComment = true;
+            }
+
+            // Kiểm tra nếu là ngày nhưng > 3 ngày
+            const dayMatch = combinedTimeInfo.match(/(\d+)\s*(ngày|days?)\b/i);
+            if (dayMatch && parseInt(dayMatch[1], 10) > 3) {
+                isOldComment = true;
+            }
+
             // Trích xuất nội dung bình luận (cho phép bình luận 1 ký tự, icon, số, chữ ngắn)
             const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
             const contentLines = lines.filter(l => {
@@ -435,6 +623,13 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 }
             }
 
+            // Cắt bỏ sạch tiền tố thời gian khỏi commentText
+            commentText = commentText.replace(/^\s*\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*/i, '').trim();
+            commentText = commentText.replace(/^\s*(?:vừa xong|just now|hôm qua|yesterday)\s*/i, '').trim();
+            if (!commentText) {
+                commentText = ".";
+            }
+
             // Kiểm tra nút Trả lời / Phản hồi & Nút Nhắn tin
             const candidateEls = Array.from(art.querySelectorAll('button, [role="button"], a[role="link"], [role="link"], span, div'));
             const rBtn = candidateEls.find(isReplyBtn);
@@ -443,6 +638,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             parsedComments.push({
                 domIndex: allArticles.indexOf(art),
                 isPageReply: isPageReply,
+                isOldComment: isOldComment,
                 authorName: authorName || "bạn",
                 commentText: commentText,
                 hasReplyBtn: !!rBtn,
@@ -467,8 +663,8 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             item.hasPageReply = hasReplyBelow;
         }
 
-        // Lấy danh sách tất cả các bình luận khách chưa có Page trả lời
-        const unrepliedList = parsedComments.filter(c => !c.isPageReply && !c.hasPageReply);
+        // Lấy danh sách tất cả các bình luận khách chưa có Page trả lời VÀ KHÔNG PHẢI BÌNH LUẬN CŨ (BỎ QUA 100% CŨ)
+        const unrepliedList = parsedComments.filter(c => !c.isPageReply && !c.hasPageReply && !c.isOldComment);
 
         let target = null;
         let targetArticleNode = null;
@@ -504,6 +700,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             dom_index: c.domIndex,
             author_name: c.authorName,
             comment_text: c.commentText,
+            is_old_comment: c.isOldComment,
             has_reply_btn: c.hasReplyBtn,
             has_msg_btn: !!c.msgBtnText,
             msg_btn_text: c.msgBtnText,
@@ -541,8 +738,10 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
     try:
         raw_res = await page.evaluate(js_code, PAGE_NAMES)
         raw_res["author_name"] = clean_customer_name(raw_res.get("author_name", ""))
+        raw_res["comment_text"] = clean_comment_text(raw_res.get("comment_text", ""))
         for uc in raw_res.get("unreplied_comments", []):
             uc["author_name"] = clean_customer_name(uc.get("author_name", ""))
+            uc["comment_text"] = clean_comment_text(uc.get("comment_text", ""))
         return raw_res
     except Exception as e:
         logger.debug("Không thể phân tích DOM bình luận: %s", e)
@@ -642,7 +841,7 @@ async def send_inbox_via_messenger_search(
         await human_sleep(3.5, 5.0)
 
         # 1. Thử tìm kiếm trực tiếp trong danh sách hội thoại cột trái
-        thread_items = page.locator('[role="navigation"] [role="listitem"], [role="grid"] [role="row"], div[role="listitem"]')
+        thread_items = page.locator('div[role="presentation"].x1ypdohk, div._a6ag._a6ah, [role="navigation"] [role="listitem"], [role="grid"] [role="row"], div[role="listitem"]')
         found_item = False
         item_count = min(await thread_items.count(), 15)
 
@@ -651,7 +850,8 @@ async def send_inbox_via_messenger_search(
             txt = (await item.inner_text() or "").lower()
             if clean_name.lower() in txt:
                 logger.info("Tìm thấy hội thoại của [%s] trong danh sách gần nhất!", clean_name)
-                await item.click()
+                # Click tại x=150, y=40 để mở chat an toàn, không bấm vào menu phụ
+                await item.click(position={"x": 150, "y": 40}, timeout=4000)
                 found_item = True
                 await human_sleep(2.0, 3.5)
                 break
@@ -665,27 +865,40 @@ async def send_inbox_via_messenger_search(
                 await search_box.fill(clean_name)
                 await human_sleep(2.5, 4.0)
 
-                result_items = page.locator('[role="navigation"] [role="listitem"], [role="listbox"] [role="option"]')
+                result_items = page.locator('div[role="presentation"].x1ypdohk, [role="navigation"] [role="listitem"], [role="listbox"] [role="option"]')
                 if await result_items.count() > 0:
                     first_res = result_items.first
                     if await first_res.is_visible():
-                        await first_res.click()
+                        await first_res.click(position={"x": 150, "y": 40}, timeout=4000)
                         found_item = True
                         await human_sleep(2.0, 3.5)
 
-        # 3. Gửi tin nhắn nếu đã mở được hội thoại
+        # 3. Gửi tin nhắn nếu đã mở được hội thoại (duyệt qua TẤT CẢ các textbox)
         if found_item:
-            composer = page.locator(
+            composers = page.locator(
                 'div[role="textbox"][contenteditable="true"], '
                 'textarea[placeholder*="tin nhắn"], '
                 'textarea[placeholder*="message"]'
-            ).last
-            if await composer.count() > 0 and await composer.is_visible():
-                await type_human_like(page, composer, private_reply_text)
-                await page.keyboard.press("Enter")
-                await human_sleep(2.0, 3.5)
-                logger.info("Đã gửi tin nhắn riêng cho [%s] qua Fallback Messenger thành công!", clean_name)
+            )
+            c_cnt = await composers.count()
+            sent_msg = False
+            for ci in range(c_cnt):
+                c_target = composers.nth(ci)
+                if await c_target.is_visible():
+                    aria = (await c_target.get_attribute("aria-label") or "").lower()
+                    ph = (await c_target.get_attribute("placeholder") or "").lower()
+                    if not any(k in aria or k in ph for k in ["bình luận", "comment", "phản hồi"]):
+                        try:
+                            await type_human_like(page, c_target, private_reply_text)
+                            await page.keyboard.press("Enter")
+                            await human_sleep(2.0, 3.5)
+                            sent_msg = True
+                            logger.info("Đã gửi tin nhắn riêng cho [%s] qua Fallback Messenger (ô %d) thành công!", clean_name, ci)
+                            break
+                        except Exception as e_send:
+                            logger.debug("Lỗi nhập composer %d trong Messenger: %s", ci, e_send)
 
+            if sent_msg:
                 # Quay lại trang ban đầu
                 await page.goto(return_url, wait_until="domcontentloaded", timeout=45000)
                 await human_sleep(3.0, 5.0)
@@ -858,26 +1071,35 @@ async def send_private_inbox_to_commenter(
             'textarea[placeholder*="tin nhắn"]',
             'textarea[placeholder*="message"]',
         ]
+        sent_in_chat = False
         for c_sel in composer_selectors:
             composers = page.locator(c_sel)
             cnt = await composers.count()
-            if cnt > 0:
-                target_composer = composers.last
+            for ci in range(cnt):
+                target_composer = composers.nth(ci)
                 if await target_composer.is_visible():
                     aria = (await target_composer.get_attribute("aria-label") or "").lower()
                     placeholder = (await target_composer.get_attribute("placeholder") or "").lower()
                     if not any(k in aria or k in placeholder for k in ["bình luận", "comment", "phản hồi"]):
-                        await type_human_like(page, target_composer, private_reply_text)
-                        await page.keyboard.press("Enter")
-                        await human_sleep(2.0, 3.5)
-                        logger.info("Đã gửi tin nhắn riêng cho [%s] qua giao diện See Chat thành công!", author_name)
+                        try:
+                            await type_human_like(page, target_composer, private_reply_text)
+                            await page.keyboard.press("Enter")
+                            await human_sleep(2.0, 3.5)
+                            logger.info("Đã gửi tin nhắn riêng cho [%s] qua giao diện See Chat (ô %d) thành công!", author_name, ci)
+                            sent_in_chat = True
+                            break
+                        except Exception as e_send_chat:
+                            logger.debug("Lỗi gửi tin qua See Chat composer %d: %s", ci, e_send_chat)
+            if sent_in_chat:
+                break
 
-                        # Quay lại trang bài viết ban đầu
-                        if page.url != post_url:
-                            logger.info("Đang quay lại URL bài viết để tiếp tục quét: %s", post_url)
-                            await page.goto(post_url, wait_until="domcontentloaded", timeout=45000)
-                            await human_sleep(3.0, 5.0)
-                        return True
+        if sent_in_chat:
+            # Quay lại trang bài viết ban đầu
+            if page.url != post_url:
+                logger.info("Đang quay lại URL bài viết để tiếp tục quét: %s", post_url)
+                await page.goto(post_url, wait_until="domcontentloaded", timeout=45000)
+                await human_sleep(3.0, 5.0)
+            return True
 
     # TRƯỜNG HỢP 3: Fallback chuyển sang tab Messenger tìm kiếm author_name
     if author_name and author_name != "bạn":
@@ -903,13 +1125,15 @@ async def process_facebook_comments_tab(
     """
     Quét tab Bình luận Facebook trên Meta Business Suite:
     1. Lọc sạch tên khách hàng (chống lấy nhầm 'Chỉ báo trạng thái online').
-    2. Tự động mở rộng các phản hồi bị ẩn dưới nút 'Xem ... phản hồi'.
-    3. Lặp xử lý HẾT tất cả bình luận chưa trả lời trong bài viết đang mở.
-    4. Thả Like bình luận.
-    5. Random câu trả lời công khai lồng dưới bình luận (Nested Reply).
-    6. Tự động gửi tin nhắn riêng (Inbox) cho người bình luận đó:
+    2. Chọn bài viết an toàn ở cột trái tại position x=150, y=40 (không bấm x=490, không đụng xóa/ẩn bài).
+    3. Tự động chuyển sắp xếp sang 'Mới nhất' (Newest) / 'Tất cả bình luận'.
+    4. Tự động mở rộng các phản hồi bị ẩn dưới nút 'Xem ... phản hồi'.
+    5. Chỉ xử lý bình luận MỚI (vừa xong, phút, giờ, hôm qua, 1-3 ngày), BỎ QUA 100% bình luận cũ (tuần, tháng, năm).
+    6. Thả Like bình luận.
+    7. Random câu trả lời công khai lồng dưới bình luận (Nested Reply).
+    8. Tự động gửi tin nhắn riêng (Inbox) cho người bình luận đó:
        - Hỗ trợ Popup Modal
-       - Hỗ trợ giao diện See Chat
+       - Hỗ trợ giao diện See Chat (duyệt mọi textbox)
        - Hỗ trợ Fallback tìm kiếm trong Messenger
     """
     replied_count = 0
@@ -923,8 +1147,9 @@ async def process_facebook_comments_tab(
 
     # Tìm danh sách các bài viết / bài đăng có bình luận ở cột bên trái
     thread_selectors = [
-        '[role="navigation"] [role="listitem"]',
+        'div._a6ag._a6ah',
         '[role="grid"] [role="row"]',
+        '[role="navigation"] [role="listitem"]',
         '[data-pagelet*="ThreadList"] [role="button"]',
         'div[role="listitem"]',
     ]
@@ -951,13 +1176,17 @@ async def process_facebook_comments_tab(
                 continue
 
             preview_text = (await item.inner_text() or "").strip()
+            # Bấm vào dòng bài viết tại position x=150, y=40 để mở chi tiết bình luận, tuyệt đối không bấm x=490 (nút xóa/menu)
             try:
-                await item.click(timeout=3000)
+                await item.click(position={"x": 150, "y": 40}, timeout=4000)
             except Exception:
                 await dismiss_blocking_modals(page)
-                await item.click(timeout=3000)
+                await item.click(position={"x": 150, "y": 40}, timeout=4000)
             await human_sleep(2.0, 3.5)
             current_post_url = page.url
+
+            # Đảm bảo bài viết hiển thị bình luận mới nhất
+            await ensure_newest_comments_filter(page)
 
             # Lặp xử lý HẾT tất cả bình luận chưa trả lời trong bài viết đang mở
             max_comments_per_post = 10
@@ -989,6 +1218,11 @@ async def process_facebook_comments_tab(
                     if is_page_author_name(cand_author):
                         continue
 
+                    # BỎ QUA 100% nếu bình luận cũ (tuần, tháng, năm hoặc > 3 ngày)
+                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand_text, cand.get("innerPreview", "")):
+                        logger.info("Bình luận cũ từ [%s] ('%s'). BỎ QUA 100%!", cand_author, cand_text[:40])
+                        continue
+
                     should_rep, comment_key = memory.should_reply_comment(
                         author_name=cand_author,
                         comment_text=cand_text,
@@ -1006,8 +1240,8 @@ async def process_facebook_comments_tab(
                     logger.debug("Tất cả bình luận chưa rep trên bài viết này đã được xử lý trong memory hoặc không hợp lệ.")
                     break
 
-                cand_author = target_candidate.get("author_name") or "bạn"
-                cand_text = target_candidate.get("comment_text") or preview_text
+                cand_author = clean_customer_name(target_candidate.get("author_name") or "bạn")
+                cand_text = clean_comment_text(target_candidate.get("comment_text") or preview_text)
                 cand_idx = int(target_candidate.get("dom_index", 0))
 
                 public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(cand_author)

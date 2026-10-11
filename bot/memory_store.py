@@ -171,19 +171,19 @@ class BotMemoryStore:
         if key in self.data["replied_comments"]:
             return False, key
 
-        # Kiểm tra thêm chống trùng lặp: Nếu khách này đã được trả lời bình luận cùng nội dung trên bài này
+        # Chống gửi lặp trong cùng 1 phiên ngắn (cooldown 120s cho cùng bài, cùng tác giả, cùng nội dung chính xác)
+        current_time = now_ts if now_ts is not None else time.time()
         for rk, rv in self.data["replied_comments"].items():
             if isinstance(rv, dict):
                 r_author = normalize_text(rv.get("author", ""))
                 r_text = normalize_text(rv.get("comment_text", ""))
+                r_ts = float(rv.get("replied_at", 0))
                 if r_author and r_author == normalize_text(clean_name):
-                    if r_text and norm_text and (r_text == norm_text or r_text in norm_text or norm_text in r_text):
-                        if post_id and str(post_id).strip() in rk:
-                            return False, rk
-                        elif not post_id:
+                    if r_text and norm_text and r_text == norm_text:
+                        if post_id and str(post_id).strip() in rk and (current_time - r_ts < 120):
                             return False, rk
 
-        # Nếu chưa có phản hồi của Page trên DOM và chưa được lưu trong memory -> Bắt buộc trả lời!
+        # Nếu trên DOM thực tế chưa có phản hồi của Page và chưa rep trong memory -> Bắt buộc trả lời!
         return True, key
 
     def prepare_comment_and_inbox_replies(

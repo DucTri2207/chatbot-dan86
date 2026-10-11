@@ -407,6 +407,85 @@ class TestDan86BotLogic(unittest.TestCase):
         self.assertIsNotNone(selected_cand_2)
         self.assertEqual(selected_cand_2["author_name"], "Khách C", "Candidate 2 (Khách C) phải được chọn tiếp tục!")
 
+    def test_08_old_comment_filtering_and_clean_text(self) -> None:
+        """Kiểm tra nhận diện bình luận cũ (tuần, tháng, năm, > 3 ngày) và làm sạch tiền tố thời gian."""
+        from bot.page_bot_engine import clean_comment_text, is_old_comment_timestamp
+
+        # 1. Kiểm tra làm sạch tiền tố thời gian
+        self.assertEqual(clean_comment_text("1 năm Ib"), "Ib")
+        self.assertEqual(clean_comment_text("4 tuần Cho em xin giá ạ"), "Cho em xin giá ạ")
+        self.assertEqual(clean_comment_text("2 giờ Giá bao nhiêu"), "Giá bao nhiêu")
+        self.assertEqual(clean_comment_text("vừa xong Ib shop"), "Ib shop")
+        self.assertEqual(clean_comment_text("1 ngày Giá sao"), "Giá sao")
+
+        # 2. Kiểm tra nhận diện bình luận cũ
+        self.assertTrue(is_old_comment_timestamp("1 năm Ib"))
+        self.assertTrue(is_old_comment_timestamp("2 năm trước"))
+        self.assertTrue(is_old_comment_timestamp("4 năm"))
+        self.assertTrue(is_old_comment_timestamp("10 tuần"))
+        self.assertTrue(is_old_comment_timestamp("3 tuần trước"))
+        self.assertTrue(is_old_comment_timestamp("2 tháng"))
+        self.assertTrue(is_old_comment_timestamp("4 ngày"))
+        self.assertTrue(is_old_comment_timestamp("5 ngày trước"))
+
+        # 3. Bình luận MỚI hợp lệ (<= 3 ngày) không bị coi là cũ
+        self.assertFalse(is_old_comment_timestamp("3 ngày"))
+        self.assertFalse(is_old_comment_timestamp("2 ngày"))
+        self.assertFalse(is_old_comment_timestamp("1 ngày"))
+        self.assertFalse(is_old_comment_timestamp("hôm qua"))
+        self.assertFalse(is_old_comment_timestamp("2 giờ"))
+        self.assertFalse(is_old_comment_timestamp("15 phút"))
+        self.assertFalse(is_old_comment_timestamp("vừa xong"))
+
+    def test_09_repeat_comment_from_previous_user(self) -> None:
+        """
+        Đảm bảo khách đã từng bình luận trong quá khứ khi có bình luận MỚI
+        vẫn được trả lời bình thường (không bị chặn vĩnh viễn bởi lịch sử).
+        """
+        post_id = "post_100"
+        author = "Đức Trí"
+
+        # Lần 1: Khách bình luận và được rep
+        should_rep_1, key_1 = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text="Ib shop",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=1000.0,
+        )
+        self.assertTrue(should_rep_1)
+        self.memory.mark_comment_replied(
+            comment_key=key_1,
+            author_name=author,
+            comment_text="Ib shop",
+            public_reply="Dạ chào bạn...",
+            private_inbox_sent=True,
+            now_ts=1000.0,
+        )
+
+        # Lần 2: Hôm sau (hoặc sau cooldown) khách quay lại bình luận câu MỚI trên cùng bài
+        should_rep_2, key_2 = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text="Có ship Hỏa tốc không shop?",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=5,
+            now_ts=2000.0,
+        )
+        self.assertTrue(should_rep_2, "Khách cũ bình luận câu mới phải được rep!")
+
+        # Lần 3: Khách bình luận dấu chấm trên bài khác
+        should_rep_3, key_3 = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=".",
+            has_page_reply_in_dom=False,
+            post_id="post_200",
+            dom_index=2,
+            now_ts=3000.0,
+        )
+        self.assertTrue(should_rep_3, "Khách cũ bình luận trên bài khác phải được rep!")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

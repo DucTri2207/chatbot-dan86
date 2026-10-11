@@ -317,10 +317,35 @@ def sync_facebook_credentials_from_dan86(
 ) -> Dict[str, Any]:
     """
     Tự động đồng bộ cookies từ d:\\dan86 sang state/fb_storage_state.json và state/GITHUB_SECRET_VALUE.txt.
-    Thao tác trong 0.05s, dung lượng cực nhẹ ~3.8 KB.
+    QUAN TRỌNG:
+    - Luôn bảo toàn (preserve) mảng origins (chứa localStorage của https://business.facebook.com).
+    - Nếu file storage hiện tại đã có phiên hợp lệ (c_user, xs và business.facebook.com trong origins),
+      tuyệt đối KHÔNG lấy file nguồn cũ d:\\dan86 ghi đè làm mất origins!
     """
     os.makedirs(os.path.dirname(storage_path) or STATE_DIR, exist_ok=True)
     os.makedirs(os.path.dirname(secret_path) or STATE_DIR, exist_ok=True)
+
+    # Đọc và phân tích phiên hiện tại trong storage_path nếu đã tồn tại
+    existing_origins: List[Dict[str, Any]] = []
+    existing_cookies: List[Dict[str, Any]] = []
+    has_valid_existing_session = False
+
+    if os.path.exists(storage_path):
+        try:
+            with open(storage_path, "r", encoding="utf-8") as f_ex:
+                ex_data = json.load(f_ex)
+            if isinstance(ex_data, dict):
+                existing_origins = ex_data.get("origins", [])
+                existing_cookies = ex_data.get("cookies", [])
+                ex_cookie_names = {c.get("name") for c in existing_cookies if isinstance(c, dict)}
+                has_biz_origin = any(
+                    "business.facebook.com" in org.get("origin", "") and len(org.get("localStorage", [])) > 0
+                    for org in existing_origins if isinstance(org, dict)
+                )
+                if "c_user" in ex_cookie_names and "xs" in ex_cookie_names and has_biz_origin:
+                    has_valid_existing_session = True
+        except Exception as e_read:
+            logger.debug("Lỗi đọc state hiện tại trong %s: %s", storage_path, e_read)
 
     # 1. Thử trích xuất cookies thời gian thực từ cửa sổ Chrome đang mở qua CDP (khi dùng file nguồn mặc định)
     matched: List[Dict[str, Any]] = []
@@ -340,12 +365,56 @@ def sync_facebook_credentials_from_dan86(
                     except Exception as e_save:
                         logger.debug("Không thể sao lưu cookies mới vào %s: %s", source_path, e_save)
         except Exception as e_cdp:
-            logger.debug("Không thể lấy cookies qua CDP, chuyển sang file cục bộ: %s", e_cdp)
+            logger.debug("Không thể lấy cookies qua CDP: %s", e_cdp)
 
-    # 2. Nếu chưa lấy được từ CDP, đọc từ file nguồn cục bộ
-    if not matched:
-        matched, meta = extract_facebook_cookies(source_path)
+    # 2. Nếu CDP thành công: Cập nhật cookies MỚI nhưng BẢO TOÀN toàn bộ origins hiện có!
+    if matched:
+        state_payload = {"cookies": matched, "origins": existing_origins}
+        with open(storage_path, "w", encoding="utf-8") as f:
+            json.dump(state_payload, f, ensure_ascii=False, indent=2)
 
+        storage_size = os.path.getsize(storage_path)
+        b64_secret = export_github_secret_file(storage_path, secret_path)
+        secret_size = os.path.getsize(secret_path) if os.path.exists(secret_path) else len(b64_secret)
+
+        return {
+            "success": True,
+            "cookies_count": len(matched),
+            "storage_file": storage_path,
+            "storage_size_bytes": storage_size,
+            "secret_file": secret_path,
+            "secret_size_bytes": secret_size,
+            "is_authenticated": meta.get("is_authenticated", False),
+            "message": (
+                f"Đã cập nhật thành công {len(matched)} cookies trực tiếp và bảo toàn {len(existing_origins)} origins!"
+            ),
+        }
+
+    # 3. Nếu CDP không lấy được cookies mới:
+    # Nếu file storage_path HIỆN TẠI ĐÃ CÓ phiên hoàn chỉnh (c_user, xs, business.facebook.com origins)
+    # -> TUYỆT ĐỐI KHÔNG lấy file nguồn cũ d:\dan86 ghi đè làm mất origins!
+    if has_valid_existing_session:
+        logger.info(
+            "Phiên làm việc hiện tại trong %s đã đầy đủ cookies và origins (business.facebook.com). "
+            "Bảo toàn phiên đăng nhập hiện tại, không ghi đè từ file cục bộ cũ!",
+            storage_path,
+        )
+        b64_secret = export_github_secret_file(storage_path, secret_path)
+        storage_size = os.path.getsize(storage_path)
+        secret_size = os.path.getsize(secret_path) if os.path.exists(secret_path) else len(b64_secret)
+        return {
+            "success": True,
+            "cookies_count": len(existing_cookies),
+            "storage_file": storage_path,
+            "storage_size_bytes": storage_size,
+            "secret_file": secret_path,
+            "secret_size_bytes": secret_size,
+            "is_authenticated": True,
+            "message": f"Đã bảo toàn phiên đăng nhập hoàn chỉnh với {len(existing_origins)} origins trong {storage_path}!",
+        }
+
+    # 4. Nếu chưa có phiên hợp lệ, đọc fallback từ file nguồn cục bộ d:\dan86
+    matched, meta = extract_facebook_cookies(source_path)
     if not matched:
         return {
             "success": False,
@@ -353,14 +422,11 @@ def sync_facebook_credentials_from_dan86(
             "meta": meta,
         }
 
-    # 1. Ghi file fb_storage_state.json
-    state_payload = {"cookies": matched, "origins": []}
+    state_payload = {"cookies": matched, "origins": existing_origins}
     with open(storage_path, "w", encoding="utf-8") as f:
         json.dump(state_payload, f, ensure_ascii=False, indent=2)
 
     storage_size = os.path.getsize(storage_path)
-
-    # 2. Ghi file GITHUB_SECRET_VALUE.txt (chuỗi mã hóa Base64 cho GitHub Secrets)
     b64_secret = export_github_secret_file(storage_path, secret_path)
     secret_size = os.path.getsize(secret_path) if os.path.exists(secret_path) else len(b64_secret)
 
@@ -373,7 +439,7 @@ def sync_facebook_credentials_from_dan86(
         "secret_size_bytes": secret_size,
         "is_authenticated": meta.get("is_authenticated", False),
         "message": (
-            f"Đã trích xuất thành công {len(matched)} cookies Facebook vào {storage_path} "
+            f"Đã nạp {len(matched)} cookies Facebook vào {storage_path} "
             f"({storage_size} bytes, siêu nhẹ ~{storage_size/1024:.1f} KB)!"
         ),
     }

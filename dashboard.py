@@ -12,6 +12,7 @@ import datetime
 import http.server
 import json
 import os
+import re
 import socketserver
 import subprocess
 import sys
@@ -235,10 +236,24 @@ def collect_dashboard_data() -> Dict[str, Any]:
     gh_data = fetch_github_live_data(force=False)
     vps_mem = gh_data.get("vps_memory")
     if isinstance(vps_mem, dict):
-        if len(vps_mem.get("conversations", {})) >= len(memory_data["conversations"]):
-            memory_data["conversations"].update(vps_mem.get("conversations", {}))
-        if len(vps_mem.get("replied_comments", {})) >= len(memory_data["replied_comments"]):
-            memory_data["replied_comments"].update(vps_mem.get("replied_comments", {}))
+        clean_vps_cmts = {
+            cid: cobj for cid, cobj in vps_mem.get("replied_comments", {}).items()
+            if isinstance(cobj, dict) and not (
+                re.search(r'\b\d+\s*(tuần|tháng|năm)\b', str(cobj.get("comment_text", ""))) or
+                any(k in str(cobj.get("comment_text", "")).lower() for k in ["năm trước", "tháng trước", "tuần trước"])
+            )
+        }
+        clean_vps_convs = {
+            ck: cv for ck, cv in vps_mem.get("conversations", {}).items()
+            if isinstance(cv, dict) and not (
+                re.search(r'\b\d+\s*(tuần|tháng|năm)\b', str(cv.get("last_replied_customer_msg", ""))) or
+                any(k in str(cv.get("last_replied_customer_msg", "")).lower() for k in ["năm trước", "tháng trước", "tuần trước"])
+            )
+        }
+        if len(clean_vps_convs) >= len(memory_data["conversations"]):
+            memory_data["conversations"].update(clean_vps_convs)
+        if len(clean_vps_cmts) >= len(memory_data["replied_comments"]):
+            memory_data["replied_comments"].update(clean_vps_cmts)
         if isinstance(vps_mem.get("stats"), dict):
             for k, v in vps_mem["stats"].items():
                 memory_data["stats"][k] = max(memory_data["stats"].get(k, 0), v)
@@ -251,6 +266,10 @@ def collect_dashboard_data() -> Dict[str, Any]:
     for key, c in memory_data["conversations"].items():
         if not isinstance(c, dict):
             continue
+        c_msg = str(c.get("last_replied_customer_msg", ""))
+        if re.search(r'\b\d+\s*(tuần|tháng|năm)\b', c_msg) or any(k in c_msg.lower() for k in ["năm trước", "tháng trước", "tuần trước"]):
+            continue
+
         stage = int(c.get("stage", 1))
         if stage >= 2:
             stage_2_count += 1
@@ -285,11 +304,22 @@ def collect_dashboard_data() -> Dict[str, Any]:
     for key, cmt in memory_data["replied_comments"].items():
         if not isinstance(cmt, dict):
             continue
+        c_text = cmt.get("comment_text", "")
+        # Lọc bỏ hoàn toàn các bình luận cũ (1 năm, 2 năm, 4 năm, tuần, tháng...)
+        if re.search(r'\b\d+\s*(tuần|tháng|năm)\b', c_text) or any(k in c_text.lower() for k in ["năm trước", "tháng trước", "tuần trước"]):
+            continue
+        day_m = re.search(r'\b(\d+)\s*ngày\b', c_text)
+        if day_m and int(day_m.group(1)) > 3:
+            continue
+
+        clean_text = re.sub(r'^\s*\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm)\s*(?:trước)?\s*', '', c_text, flags=re.IGNORECASE).strip()
+        clean_text = re.sub(r'^\s*(?:vừa xong|hôm qua)\s*', '', clean_text, flags=re.IGNORECASE).strip() or c_text
+
         ts = float(cmt.get("replied_at", 0))
         comments_list.append({
             "key": key,
             "author": cmt.get("author") or "Khách bình luận",
-            "comment_text": cmt.get("comment_text", ""),
+            "comment_text": clean_text,
             "public_reply": cmt.get("public_reply", ""),
             "private_inbox_sent": bool(cmt.get("private_inbox_sent", False)),
             "private_reply_text": cmt.get("private_reply_text", ""),
