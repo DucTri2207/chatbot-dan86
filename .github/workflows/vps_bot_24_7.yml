@@ -60,7 +60,7 @@ jobs:
           fi
 
       - name: 6. Tự động gọi Ca VPS tiếp theo nối đuôi 24/24
-        if: always()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
