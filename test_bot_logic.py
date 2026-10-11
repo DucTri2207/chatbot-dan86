@@ -50,20 +50,38 @@ class TestDan86BotLogic(unittest.TestCase):
         """Kiểm tra xử lý lọc sạch tên hệ thống (Lỗi 1: Chỉ báo trạng thái online)."""
         # 1. Nhãn hệ thống đứng một mình -> Trả về danh xưng mặc định 'bạn'
         self.assertEqual(clean_customer_name("Chỉ báo trạng thái online"), "bạn")
+        self.assertEqual(clean_customer_name("Online status indicator"), "bạn")
         self.assertEqual(clean_customer_name("Đang hoạt động"), "bạn")
-        self.assertEqual(clean_customer_name("Hoạt động 5 phút trước"), "bạn")
+        self.assertEqual(clean_customer_name("Active now"), "bạn")
+        self.assertEqual(clean_customer_name("Ẩn"), "bạn")
+        self.assertEqual(clean_customer_name("Trả lời"), "bạn")
+        self.assertEqual(clean_customer_name("See Chat"), "bạn")
 
-        # 2. Tên khách kèm nhãn trạng thái -> Tách lấy tên khách chuẩn
+        # 2. Tên người thật chứa từ 'Ẩn' -> KHÔNG được lọc nhầm sang 'bạn'
+        self.assertEqual(clean_customer_name("Nguyễn Văn Ẩn"), "Nguyễn Văn Ẩn")
+        self.assertEqual(clean_customer_name("Hoàng Ẩn"), "Hoàng Ẩn")
+
+        # 3. Tên khách kèm nhãn trạng thái hoặc aria-label -> Tách lấy tên khách chuẩn
         self.assertEqual(clean_customer_name("Trí Đức\nChỉ báo trạng thái online"), "Trí Đức")
         self.assertEqual(clean_customer_name("Bình luận dưới tên Trí Đức vào 2 giờ trước"), "Trí Đức")
+        self.assertEqual(clean_customer_name("Comment by Trí Đức 2 hours ago"), "Trí Đức")
+        self.assertEqual(clean_customer_name("Bình luận dưới tên Lệ Thuyền"), "Lệ Thuyền")
 
-        # 3. Tác giả là nhãn hệ thống thì should_reply_comment phải bỏ qua ngay lập tức
+        # 4. Tác giả là nhãn hệ thống thì should_reply_comment phải bỏ qua ngay lập tức
         should_rep, _ = self.memory.should_reply_comment(
             author_name="Chỉ báo trạng thái online",
             comment_text="Đang hoạt động",
             has_page_reply_in_dom=False,
         )
         self.assertFalse(should_rep, "Bot không được phép rep thẻ chỉ báo trạng thái online")
+
+        # 5. Tác giả là người thật tên Ẩn -> Phải cho phép trả lời
+        should_rep_an, _ = self.memory.should_reply_comment(
+            author_name="Nguyễn Văn Ẩn",
+            comment_text="Set quà này giá bao nhiêu vậy shop?",
+            has_page_reply_in_dom=False,
+        )
+        self.assertTrue(should_rep_an, "Người thật tên Ẩn phải được phép trả lời")
 
     def test_03_comment_reply_once_and_auto_inbox(self) -> None:
         """Đảm bảo bình luận chỉ được rep 1 lần duy nhất + gửi kèm inbox riêng."""
@@ -205,6 +223,34 @@ class TestDan86BotLogic(unittest.TestCase):
             now_ts=t_after_3h + 120,
         )
         self.assertEqual(action5, "NONE", "Sau khi rep WAIT_STAFF_REPLY, bot phải dừng hẳn nhường nhân viên")
+
+        # 6. Nhân viên thật vào trả lời khách tại t_staff = t_after_3h + 600s
+        t_staff = t_after_3h + 600
+        self.memory.touch_staff_interaction("Anh Minh", thread_id="thread_999", now_ts=t_staff)
+
+        # 7. Khách nhắn tiếp sau 20 phút kể từ lúc nhân viên trả lời -> Bot phải giữ im lặng (NONE)
+        action7, _, _ = self.memory.decide_inbox_action(
+            customer_name="Anh Minh",
+            last_message_text="Em cảm ơn anh chị",
+            last_sender_is_page=False,
+            has_prior_page_messages_in_dom=True,
+            thread_id="thread_999",
+            now_ts=t_staff + 1200,
+        )
+        self.assertEqual(action7, "NONE", "Nhân viên vừa chat nên trong vòng 3 tiếng bot không được can thiệp")
+
+        # 8. Sau 3 tiếng 5 phút im lặng kể từ lúc nhân viên chat -> Khách nhắn lại -> Bot rep WAIT_STAFF_REPLY
+        t_staff_after_3h = t_staff + (180 * 60) + 300
+        action8, reply8, _ = self.memory.decide_inbox_action(
+            customer_name="Anh Minh",
+            last_message_text="Shop cho em xin số tài khoản chuyển tiền nhé",
+            last_sender_is_page=False,
+            has_prior_page_messages_in_dom=True,
+            thread_id="thread_999",
+            now_ts=t_staff_after_3h,
+        )
+        self.assertEqual(action8, "WAIT_STAFF_REPLY", "Sau 3 tiếng im lặng kể từ lúc nhân viên chat, khách nhắn lại phải rep WAIT_STAFF_REPLY")
+        self.assertIn("Anh Minh", reply8)
 
 
 if __name__ == "__main__":

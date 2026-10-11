@@ -103,14 +103,15 @@ class BotMemoryStore:
         Kiểm tra xem bình luận này có cần trả lời hay không.
         Trả về (True/False, comment_key).
         """
-        from bot.bot_config import SYSTEM_BLACKLIST_STRINGS, clean_customer_name
+        from bot.bot_config import clean_customer_name, is_system_label
         
         # Nếu tên tác giả bị dính nhãn hệ thống (ví dụ: "Chỉ báo trạng thái online"), tuyệt đối không trả lời
-        low_author = (author_name or "").lower().strip()
-        if any(bad in low_author for bad in SYSTEM_BLACKLIST_STRINGS if bad not in ("bạn", "khách")):
+        if is_system_label(author_name):
             return False, ""
 
         clean_name = clean_customer_name(author_name)
+        if clean_name == "bạn" and is_system_label(author_name):
+            return False, ""
         key = make_comment_key(clean_name, comment_text, comment_id)
         if not normalize_text(comment_text):
             return False, key
@@ -234,6 +235,7 @@ class BotMemoryStore:
                 "stage": 1,
                 "last_replied_customer_msg": norm_msg,
                 "last_bot_reply_ts": ts,
+                "last_interaction_ts": ts,
                 "source": "prior_history",
             }
             self.save()
@@ -243,7 +245,8 @@ class BotMemoryStore:
         assert record is not None
         last_replied_msg = record.get("last_replied_customer_msg", "")
         last_bot_ts = float(record.get("last_bot_reply_ts", 0))
-        elapsed_seconds = ts - last_bot_ts
+        last_interaction_ts = float(record.get("last_interaction_ts", last_bot_ts))
+        elapsed_seconds = ts - max(last_bot_ts, last_interaction_ts)
         silence_threshold = SILENCE_REMINDER_MINUTES * 60  # 180 phút = 10,800 giây (3 tiếng)
 
         # Nếu tin nhắn cuối cùng trên màn hình vẫn chính là tin nhắn mà Bot vừa trả lời -> Không rep lại
@@ -252,7 +255,11 @@ class BotMemoryStore:
 
         # Nếu 2 bên im lặng quá lâu tầm 3 tiếng mà khách nhắn lại tin mới:
         # Bot rep DUY NHẤT 1 tin chờ nhân viên (WAIT_STAFF_REPLY), rồi lại dừng để chờ nhân viên
-        if elapsed_seconds >= silence_threshold and norm_msg != last_replied_msg:
+        if elapsed_seconds >= silence_threshold:
+            # Nếu vừa rep WAIT_STAFF_REPLY cho chính nội dung tin nhắn này rồi thì không rep lại nữa
+            if record.get("stage") == 2 and norm_msg == last_replied_msg:
+                return "NONE", "", t_key
+
             reply_text = pick_template(
                 WAIT_STAFF_REPLIES,
                 customer_name=c_name,
@@ -281,9 +288,26 @@ class BotMemoryStore:
             "last_replied_customer_msg": normalize_text(customer_message_text),
             "last_bot_reply_text": reply_text,
             "last_bot_reply_ts": ts,
+            "last_interaction_ts": ts,
         }
         if action_type == "FIRST_REPLY":
             self.data["stats"]["first_inbox_replies"] += 1
         elif action_type == "WAIT_STAFF_REPLY":
             self.data["stats"]["wait_staff_replies"] += 1
         self.save()
+
+    def touch_staff_interaction(
+        self,
+        customer_name: str,
+        thread_id: str = "",
+        now_ts: Optional[float] = None,
+    ) -> None:
+        """Ghi nhận Fanpage / nhân viên thật vừa tương tác trong hội thoại (reset mốc tính 3 tiếng im lặng)."""
+        from bot.bot_config import clean_customer_name
+        ts = now_ts if now_ts is not None else time.time()
+        c_name = clean_customer_name(customer_name)
+        t_key = make_thread_key(c_name, thread_id)
+        if t_key in self.data["conversations"]:
+            self.data["conversations"][t_key]["last_interaction_ts"] = ts
+            self.data["conversations"][t_key]["stage"] = 1
+            self.save()

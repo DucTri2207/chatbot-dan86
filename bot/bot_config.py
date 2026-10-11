@@ -53,36 +53,77 @@ PAGE_NAMES = [
     "ba loc green",
 ]
 
-# Danh sách các chuỗi nhãn hệ thống tuyệt đối không dùng làm tên khách hàng
-SYSTEM_BLACKLIST_STRINGS = [
+# Danh sách các cụm từ nhãn trạng thái hệ thống cấm kỵ (không bao giờ là tên người)
+SYSTEM_PHRASES_BLACKLIST: List[str] = [
     "chỉ báo trạng thái online",
     "online status indicator",
     "đang hoạt động",
-    "hoạt động",
+    "active now",
     "đang có mặt",
+    "người dùng facebook",
+    "facebook user",
     "hộp thư",
-    "chưa đọc",
     "bình luận trên trang",
     "trao đổi thêm",
     "tạo quảng cáo",
     "thông tin chi tiết",
     "quy trình tự động hóa",
     "quảng bá",
-    "theo dõi lại",
+    "xem thêm phản hồi",
+    "xem 1 phản hồi",
+    "xem phản hồi",
+    "view more replies",
+]
+
+# Danh sách từ nhãn nút/hệ thống đơn lẻ (chỉ cấm khi trùng khớp hoàn toàn, tránh lọc nhầm tên người như 'Nguyễn Văn Ẩn')
+EXACT_SYSTEM_LABELS = {
+    "ẩn",
+    "hide",
+    "trả lời",
+    "reply",
+    "thích",
+    "like",
+    "bày tỏ cảm xúc",
     "theo dõi",
+    "theo dõi lại",
+    "follow",
+    "follow back",
     "mới nhất",
     "phù hợp nhất",
     "tất cả bình luận",
     "xem thêm",
-    "xem 1 phản hồi",
-    "ẩn",
-    "trả lời",
+    "see more",
+    "chưa đọc",
+    "unread",
     "bạn",
     "khách",
     "user",
-    "facebook user",
-    "người dùng facebook",
-]
+    "see chat",
+    "chat",
+    "gửi tin nhắn",
+    "nhắn tin",
+    "send message",
+    "message",
+    "tác giả",
+    "author",
+}
+
+# Hợp nhất danh sách để tương thích ngược
+SYSTEM_BLACKLIST_STRINGS: List[str] = SYSTEM_PHRASES_BLACKLIST + list(EXACT_SYSTEM_LABELS)
+
+
+def is_system_label(text: str) -> bool:
+    """Kiểm tra một chuỗi có phải là nhãn hệ thống/nút bấm của Facebook hay không."""
+    if not text:
+        return True
+    norm = " ".join(str(text).lower().split())
+    if norm in EXACT_SYSTEM_LABELS:
+        return True
+    if any(phrase in norm for phrase in SYSTEM_PHRASES_BLACKLIST):
+        return True
+    if any(p in norm for p in PAGE_NAMES):
+        return True
+    return False
 
 
 def clean_customer_name(name: str) -> str:
@@ -92,18 +133,29 @@ def clean_customer_name(name: str) -> str:
         return "bạn"
     cleaned = str(name).strip()
 
-    # Nếu truyền vào nguyên văn chuỗi aria-label: 'Bình luận dưới tên Trí Đức vào 2 giờ trước'
-    aria_match = re.search(r"bình luận dưới tên\s+(.+?)\s+vào", cleaned, re.IGNORECASE)
+    # Hỗ trợ cả tiếng Việt và tiếng Anh aria-label:
+    # 'Bình luận dưới tên Trí Đức vào 2 giờ trước'
+    # 'Comment by Trí Đức 2 hours ago'
+    # 'Bình luận dưới tên Trí Đức'
+    aria_match = re.search(
+        r"(?:bình luận dưới tên|comment by)\s+(.+?)(?:\s+(?:vào|at|ago|on)|\s*$)",
+        cleaned,
+        re.IGNORECASE,
+    )
     if aria_match:
         cleaned = aria_match.group(1).strip()
 
     cleaned = cleaned.split("·")[0].split("•")[0].split("\n")[0].strip()
+    # Loại bỏ phần timestamp thừa nếu có dính vào (vd: 'Trí Đức 1 phút', 'Trí Đức 2 giờ trước')
+    cleaned = re.sub(
+        r"\s+\d+\s+(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|min|mins|hour|hours|day|days)\b.*$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+
     norm = " ".join(cleaned.lower().split())
-    if not norm:
-        return "bạn"
-    if any(bad in norm for bad in SYSTEM_BLACKLIST_STRINGS):
-        return "bạn"
-    if any(p in norm for p in PAGE_NAMES):
+    if not norm or is_system_label(norm):
         return "bạn"
     if len(cleaned) < 2 or len(cleaned) > 50:
         return "bạn"
