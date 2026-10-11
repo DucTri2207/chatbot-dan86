@@ -2,11 +2,11 @@
   "running": true,
   "pid": 2991,
   "mode": "live",
-  "cycle": 5,
+  "cycle": 6,
   "headless": true,
   "started_at": 1791726387.9086661,
-  "last_heartbeat": 1791727715.0754938,
-  "last_heartbeat_str": "2026-10-11 14:08:35",
+  "last_heartbeat": 1791727850.4279675,
+  "last_heartbeat_str": "2026-10-11 14:10:50",
   "stats": {
     "comments_replied": 27,
     "private_inboxes_from_comment": 14,
@@ -14,18 +14,6 @@
     "wait_staff_replies": 0
   },
   "recent_logs": [
-    "2026-10-11 13:55:59,305 [INFO] Đã gửi phản hồi bình luận công khai cho [Thu Nga Tran] (Nested Reply: True).",
-    "2026-10-11 13:56:56,688 [INFO] Đã gửi tin nhắn riêng cho [Thu Nga Tran] qua Popup Modal thành công!",
-    "2026-10-11 13:57:43,648 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
-    "2026-10-11 13:57:49,256 [INFO] Đã cập nhật mã GitHub Secret: /home/runner/work/chatbot-dan86/chatbot-dan86/state/GITHUB_SECRET_VALUE.txt (11120 bytes)",
-    "2026-10-11 13:57:49,256 [INFO] Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!",
-    "2026-10-11 13:57:49,265 [INFO] Đang kiểm tra 10 cuộc hội thoại Messenger gần nhất.",
-    "2026-10-11 13:58:18,265 [INFO] Hoàn tất chu kỳ #1: Đã xử lý 11 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 25, 'private_inboxes_from_comment': 12, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
-    "2026-10-11 13:58:19,733 [INFO] Đã đồng bộ Live Status & Memory lên GitHub VPS thành công.",
-    "2026-10-11 13:58:19,733 [INFO] Nghỉ 59 giây trước chu kỳ quét tiếp theo...",
-    "2026-10-11 13:59:18,713 [INFO] --- Bắt đầu chu kỳ quét #2 ---",
-    "2026-10-11 13:59:18,714 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
-    "2026-10-11 13:59:25,962 [INFO] Đã cập nhật mã GitHub Secret: /home/runner/work/chatbot-dan86/chatbot-dan86/state/GITHUB_SECRET_VALUE.txt (11120 bytes)",
     "2026-10-11 13:59:25,962 [INFO] Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!",
     "2026-10-11 13:59:25,971 [INFO] Tìm thấy 10 mục bài viết có bình luận cần kiểm tra.",
     "2026-10-11 14:00:02,087 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
@@ -73,6 +61,18 @@
     "2026-10-11 14:08:08,005 [INFO] Đã cập nhật mã GitHub Secret: /home/runner/work/chatbot-dan86/chatbot-dan86/state/GITHUB_SECRET_VALUE.txt (12008 bytes)",
     "2026-10-11 14:08:08,005 [INFO] Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!",
     "2026-10-11 14:08:08,015 [INFO] Đang kiểm tra 10 cuộc hội thoại Messenger gần nhất.",
-    "2026-10-11 14:08:35,075 [INFO] Hoàn tất chu kỳ #5: Đã xử lý 1 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 27, 'private_inboxes_from_comment': 14, 'first_inbox_replies': 0, 'wait_staff_replies': 0}"
+    "2026-10-11 14:08:35,075 [INFO] Hoàn tất chu kỳ #5: Đã xử lý 1 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 27, 'private_inboxes_from_comment': 14, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
+    "2026-10-11 14:08:36,499 [INFO] Đã đồng bộ Live Status & Memory lên GitHub VPS thành công.",
+    "2026-10-11 14:08:36,499 [INFO] Nghỉ 59 giây trước chu kỳ quét tiếp theo...",
+    "2026-10-11 14:09:35,623 [INFO] --- Bắt đầu chu kỳ quét #6 ---",
+    "2026-10-11 14:09:35,623 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
+    "2026-10-11 14:09:43,028 [INFO] Đã cập nhật mã GitHub Secret: /home/runner/work/chatbot-dan86/chatbot-dan86/state/GITHUB_SECRET_VALUE.txt (12004 bytes)",
+    "2026-10-11 14:09:43,028 [INFO] Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!",
+    "2026-10-11 14:09:43,037 [INFO] Tìm thấy 10 mục bài viết có bình luận cần kiểm tra.",
+    "2026-10-11 14:10:14,088 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
+    "2026-10-11 14:10:21,350 [INFO] Đã cập nhật mã GitHub Secret: /home/runner/work/chatbot-dan86/chatbot-dan86/state/GITHUB_SECRET_VALUE.txt (12008 bytes)",
+    "2026-10-11 14:10:21,351 [INFO] Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!",
+    "2026-10-11 14:10:21,362 [INFO] Đang kiểm tra 10 cuộc hội thoại Messenger gần nhất.",
+    "2026-10-11 14:10:50,427 [INFO] Hoàn tất chu kỳ #6: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 27, 'private_inboxes_from_comment': 14, 'first_inbox_replies': 0, 'wait_staff_replies': 0}"
   ]
 }
