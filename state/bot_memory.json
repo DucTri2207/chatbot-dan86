@@ -263,6 +263,22 @@
       "private_inbox_sent": true,
       "private_reply_text": "Dạ chào Minh Hồng ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
       "replied_at": 1791728865.843143
+    },
+    "cmt:625771756641527:1:da8968df19b9c0e2": {
+      "author": "Châu Tân Tân",
+      "comment_text": "1 năm Inb ạ",
+      "public_reply": "Dạ cảm ơn Châu Tân Tân đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ, bạn mở tin nhắn xem giúp DAN86 nha! 🌸",
+      "private_inbox_sent": false,
+      "private_reply_text": "Xin chào Châu Tân Tân! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\nShop xin gửi thông tin để bạn dễ tham khảo:\n✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\nDạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!",
+      "replied_at": 1791729170.9602678
+    },
+    "cmt:625771756641527:3:1aeef249b9514c90": {
+      "author": "Hang Tran",
+      "comment_text": "1 năm .",
+      "public_reply": "Dạ shop chào Hang Tran ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Bạn check inbox giúp shop nha! ✨",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Hang Tran ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791729255.8083353
     }
   },
   "conversations": {
@@ -272,7 +288,7 @@
       "last_replied_customer_msg": "1 năm ib",
       "last_bot_reply_ts": 1791711591.0058415,
       "source": "comment_private_reply",
-      "last_interaction_ts": 1791728943.9173872
+      "last_interaction_ts": 1791729070.430763
     },
     "name:diệu linh": {
       "customer_name": "Diệu Linh",
@@ -392,11 +408,18 @@
       "last_replied_customer_msg": "1 năm xin giá",
       "last_bot_reply_ts": 1791728865.843143,
       "source": "comment_private_reply"
+    },
+    "name:hang tran": {
+      "customer_name": "Hang Tran",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm .",
+      "last_bot_reply_ts": 1791729255.8083353,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 32,
-    "private_inboxes_from_comment": 18,
+    "comments_replied": 34,
+    "private_inboxes_from_comment": 19,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
