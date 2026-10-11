@@ -112,6 +112,7 @@ def sync_state_to_github_if_vps(logger: logging.Logger, force: bool = False) -> 
         if not diff_check.stdout.strip() and not force:
             return
 
+        subprocess.run(["git", "rebase", "--abort"], capture_output=True, timeout=10)
         subprocess.run(["git", "config", "user.name", "dan86-bot"], capture_output=True, timeout=10)
         subprocess.run(["git", "config", "user.email", "bot@dan86.vn"], capture_output=True, timeout=10)
         subprocess.run(["git", "add", "state/bot_memory.json", "state/bot_status.json"], capture_output=True, timeout=10)
@@ -123,7 +124,13 @@ def sync_state_to_github_if_vps(logger: logging.Logger, force: bool = False) -> 
             timeout=15,
         )
         if commit_res.returncode == 0:
-            subprocess.run(["git", "pull", "--rebase", "origin", "master"], capture_output=True, timeout=20)
+            rebase_res = subprocess.run(
+                ["git", "pull", "--rebase", "-X", "ours", "origin", "master"],
+                capture_output=True,
+                timeout=20,
+            )
+            if rebase_res.returncode != 0:
+                subprocess.run(["git", "rebase", "--abort"], capture_output=True, timeout=10)
             push_res = subprocess.run(["git", "push", "origin", "HEAD:master"], capture_output=True, text=True, timeout=25)
             if push_res.returncode == 0:
                 logger.info("Đã đồng bộ Live Status & Memory lên GitHub VPS thành công.")

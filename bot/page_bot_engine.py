@@ -688,8 +688,16 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             item.hasPageReply = hasReplyBelow;
         }
 
-        // Lấy danh sách tất cả các bình luận khách chưa có Page trả lời VÀ KHÔNG PHẢI BÌNH LUẬN CŨ (BỎ QUA 100% CŨ)
-        const unrepliedList = parsedComments.filter(c => !c.isPageReply && !c.hasPageReply && !c.isOldComment);
+        // Lấy danh sách tất cả các bình luận khách MỚI (!c.isOldComment) chưa có Page trả lời HOẶC chưa được gửi tin nhắn riêng
+        const unrepliedList = parsedComments.filter(c => {
+            if (c.isPageReply || c.isOldComment) return false;
+            if (!c.hasPageReply) return true;
+            const mText = (c.msgBtnText || '').toLowerCase();
+            const tStr = (c.timeStr || '').toLowerCase();
+            const stillNeedsMsgBtn = mText.includes('gửi tin nhắn') || mText.includes('nhắn tin') || mText.includes('send message');
+            const isVeryRecent = /(?:vừa xong|just now|\b\d+\s*(?:giây|phút|giờ|s|m|h|mins?|hours?)\b)/i.test(tStr);
+            return stillNeedsMsgBtn || isVeryRecent;
+        });
 
         let target = null;
         let targetArticleNode = null;
@@ -730,6 +738,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             comment_text: c.commentText,
             time_str: c.timeStr || "",
             is_old_comment: c.isOldComment,
+            has_page_reply: !!c.hasPageReply,
             has_reply_btn: c.hasReplyBtn,
             has_msg_btn: !!c.msgBtnText,
             msg_btn_text: c.msgBtnText,
@@ -741,7 +750,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 author_name: target.authorName,
                 comment_text: target.commentText,
                 target_article_index: target.domIndex,
-                has_page_reply: false,
+                has_page_reply: !!target.hasPageReply,
                 has_msg_btn: !!target.msgBtnText,
                 msg_btn_text: target.msgBtnText,
                 unreplied_count: unrepliedList.length,
@@ -953,20 +962,17 @@ async def send_inbox_via_messenger_search(
 
 
 async def dismiss_blocking_modals(page: Page) -> None:
-    """Tự động đóng các popup modal / upsell / banner quảng cáo che khuất giao diện."""
+    """Tự động đóng các popup modal / upsell / banner quảng cáo che khuất giao diện (chỉ đóng bên trong dialog đang hiển thị, tuyệt đối không bấm nút trên trang chính)."""
     try:
-        modals = page.locator('[data-surface*="upsell"], div[role="dialog"]')
-        if await modals.count() > 0:
-            await page.keyboard.press("Escape")
-            await asyncio.sleep(0.3)
-            close_btn = page.locator(
-                '[aria-label*="Đóng"], [aria-label*="Close"], '
-                'div[role="button"]:has-text("Đóng"), div[role="button"]:has-text("Xong"), '
-                'button:has-text("Đóng"), button:has-text("Xong")'
-            ).first
-            if await close_btn.count() > 0 and await close_btn.is_visible():
-                await close_btn.click(timeout=1000)
-                await asyncio.sleep(0.3)
+        dialogs = page.locator('div[role="dialog"]')
+        cnt = await dialogs.count()
+        for i in range(cnt):
+            dlg = dialogs.nth(i)
+            if await dlg.is_visible():
+                close_btn = dlg.locator('[aria-label="Đóng"], [aria-label="Close"]').first
+                if await close_btn.count() > 0 and await close_btn.is_visible():
+                    await close_btn.click(timeout=1000)
+                    await asyncio.sleep(0.3)
     except Exception:
         pass
 
@@ -1248,13 +1254,15 @@ async def process_facebook_comments_tab(
                     logger.debug("Bài viết này không còn bình luận nào cần trả lời.")
                     break
 
-                # Tìm candidate đầu tiên cần trả lời theo bộ nhớ (memory)
+                # Tìm candidate đầu tiên cần trả lời hoặc cần gửi tin nhắn riêng theo bộ nhớ (memory)
                 target_candidate = None
                 target_key = None
+                needs_inbox_only = False
                 for cand in unreplied_candidates:
                     cand_author = cand.get("author_name") or "bạn"
                     cand_text = cand.get("comment_text") or preview_text
                     cand_idx = int(cand.get("dom_index", 0))
+                    cand_has_reply = bool(cand.get("has_page_reply", False))
 
                     if is_page_author_name(cand_author):
                         continue
@@ -1267,16 +1275,27 @@ async def process_facebook_comments_tab(
                     should_rep, comment_key = memory.should_reply_comment(
                         author_name=cand_author,
                         comment_text=cand_text,
-                        has_page_reply_in_dom=False,
+                        has_page_reply_in_dom=cand_has_reply,
                         post_id=post_id,
                         dom_index=cand_idx,
                     )
                     if should_rep:
                         target_candidate = cand
                         target_key = comment_key
+                        needs_inbox_only = False
                         break
 
-                # Nếu tất cả các candidate đều đã được rep trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
+                    # Luật bắt buộc: Nếu bình luận MỚI đã có câu trả lời bên dưới (cand_has_reply = True),
+                    # nhưng chưa được gửi tin nhắn riêng trong memory -> Bắt buộc nhắn 1 tin riêng cho khách!
+                    if cand_has_reply and comment_key:
+                        existing_rec = memory.data["replied_comments"].get(comment_key)
+                        if not existing_rec:
+                            target_candidate = cand
+                            target_key = comment_key
+                            needs_inbox_only = True
+                            break
+
+                # Nếu tất cả các candidate đều đã được xử lý trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
                 if target_candidate is None:
                     logger.debug("Tất cả bình luận chưa rep trên bài viết này đã được xử lý trong memory hoặc không hợp lệ.")
                     break
@@ -1287,16 +1306,17 @@ async def process_facebook_comments_tab(
 
                 public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(cand_author)
                 logger.info(
-                    "Phát hiện bình luận mới từ [%s] (Post ID: %s, DOM Index: %d, Còn %d cmt chưa rep): %s",
+                    "Phát hiện bình luận mới từ [%s] (Post ID: %s, DOM Index: %d, Chỉ gửi Inbox: %s): %s",
                     cand_author,
                     post_id,
                     cand_idx,
-                    len(unreplied_candidates),
+                    needs_inbox_only,
                     cand_text[:80],
                 )
 
                 if dry_run:
-                    logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
+                    if not needs_inbox_only:
+                        logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
                     logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
                     replied_count += 1
                     break
@@ -1313,6 +1333,35 @@ async def process_facebook_comments_tab(
                     all_arts = page.locator('[role="article"]')
                     if await all_arts.count() > cand_idx:
                         target_art = all_arts.nth(cand_idx)
+
+                if needs_inbox_only:
+                    # Bình luận đã có câu trả lời công khai bên dưới -> Chỉ gửi trực tiếp 1 tin nhắn riêng (Inbox)
+                    inbox_sent = await send_private_inbox_to_commenter(
+                        page=page,
+                        post_url=current_post_url,
+                        author_name=cand_author,
+                        private_reply_text=private_inbox_reply,
+                        comment_text=cand_text,
+                        dom_index=cand_idx,
+                        dry_run=dry_run,
+                    )
+                    memory.mark_comment_replied(
+                        comment_key=target_key,
+                        author_name=cand_author,
+                        comment_text=cand_text,
+                        public_reply="(Đã phản hồi bình luận công khai)",
+                        private_inbox_sent=inbox_sent,
+                        private_reply_text=private_inbox_reply,
+                    )
+                    replied_count += 1
+                    if page.url != current_post_url:
+                        try:
+                            await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
+                            await human_sleep(2.0, 3.5)
+                        except Exception:
+                            pass
+                    await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+                    continue
 
                 # Bước 1: Thả Like bình luận của khách
                 if target_art is not None:
