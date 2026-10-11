@@ -1359,6 +1359,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Xin chào Kim Phụng! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\nShop xin gửi thông tin để bạn dễ tham khảo:\n✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\nDạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!",
       "replied_at": 1791740767.4333696
+    },
+    "cmt:693576193194416:8:cf15ea4041475087": {
+      "author": "Mộc Thiên Hương",
+      "comment_text": "1 năm Ib",
+      "public_reply": "Dạ chào Mộc Thiên Hương, DAN86 đã gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư/tin nhắn chờ giúp shop nhé! ❤️",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Mộc Thiên Hương ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791740954.4778006
     }
   },
   "conversations": {
@@ -2406,11 +2414,18 @@
       "last_bot_reply_ts": 1791740809.9801657,
       "last_interaction_ts": 1791740809.9801657,
       "source": "prior_history"
+    },
+    "name:mộc thiên hương": {
+      "customer_name": "Mộc Thiên Hương",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm ib",
+      "last_bot_reply_ts": 1791740954.4778006,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 169,
-    "private_inboxes_from_comment": 151,
+    "comments_replied": 170,
+    "private_inboxes_from_comment": 152,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
