@@ -207,6 +207,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Chào Thu Nga Tran, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
       "replied_at": 1791727016.6887603
+    },
+    "cmt:771799805372054:5:fd22f9d81eecd8e3": {
+      "author": "Thuy Linh Nguyen",
+      "comment_text": "1 năm",
+      "public_reply": "Dạ shop chào Thuy Linh Nguyen ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Bạn check inbox giúp shop nha! ✨",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Thuy Linh Nguyen ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791727460.696114
     }
   },
   "conversations": {
@@ -293,11 +301,18 @@
       "last_replied_customer_msg": "ib mình !",
       "last_bot_reply_ts": 1791727016.6887603,
       "source": "comment_private_reply"
+    },
+    "name:thuy linh nguyen": {
+      "customer_name": "Thuy Linh Nguyen",
+      "stage": 1,
+      "last_replied_customer_msg": "1 năm",
+      "last_bot_reply_ts": 1791727460.696114,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 25,
-    "private_inboxes_from_comment": 12,
+    "comments_replied": 26,
+    "private_inboxes_from_comment": 13,
     "first_inbox_replies": 0,
     "wait_staff_replies": 0
   }
