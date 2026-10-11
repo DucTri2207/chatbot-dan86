@@ -27,18 +27,18 @@ GITHUB_SECRET_EXPORT_FILE = os.path.join(STATE_DIR, "GITHUB_SECRET_VALUE.txt")
 MEMORY_FILE = os.path.join(STATE_DIR, "bot_memory.json")
 BOT_STATUS_FILE = os.path.join(STATE_DIR, "bot_status.json")
 
-# URL Quản trị Hộp thư & Bình luận của Meta Business Suite
+# URL Quản trị Hộp thư & Bình luận của Meta Business Suite (Dần86Farm ID: 104011958817512)
 META_INBOX_ALL_URL = os.environ.get(
     "META_INBOX_URL",
-    "https://business.facebook.com/latest/inbox/all",
+    "https://business.facebook.com/latest/inbox/all?asset_id=104011958817512",
 )
 META_INBOX_MESSENGER_URL = os.environ.get(
     "META_MESSENGER_URL",
-    "https://business.facebook.com/latest/inbox/messenger",
+    "https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
 )
 META_INBOX_COMMENTS_URL = os.environ.get(
     "META_COMMENTS_URL",
-    "https://business.facebook.com/latest/inbox/facebook",
+    "https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
 )
 
 # Tên nhận diện Fanpage của mình (kiểm tra xem tin nhắn/bình luận cuối có phải của shop không)

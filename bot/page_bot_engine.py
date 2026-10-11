@@ -168,13 +168,66 @@ def is_page_author_name(text: str) -> bool:
 
 
 async def verify_logged_in(page: Page) -> bool:
-    """Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa."""
+    """
+    Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa.
+    Tự động xử lý nút bấm đăng nhập một chạm 'Tiếp tục bằng Facebook' / 'Tiếp tục dưới tên Đức Trí'
+    nếu Meta Business Suite đang ở màn hình chuyển giao phiên (SSO bridge).
+    """
     url = page.url.lower()
-    if "login" in url or "checkpoint" in url:
-        return False
+
+    # 1. Nếu trang chứa form nhập tài khoản / mật khẩu thông thường
     login_form = await page.locator('input[name="email"], input[name="pass"]').count()
     if login_form > 0:
         return False
+
+    # 2. Nếu đang ở trang đăng nhập của Meta Business Suite, tự động bấm nút tiếp tục bằng tài khoản có sẵn
+    if "login" in url:
+        logger.info("Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...")
+        sso_selectors = [
+            'button:has-text("Tiếp tục bằng Facebook")',
+            'a:has-text("Tiếp tục bằng Facebook")',
+            'div[role="button"]:has-text("Tiếp tục bằng Facebook")',
+            'button:has-text("Tiếp tục dưới tên")',
+            'a:has-text("Tiếp tục dưới tên")',
+            'div[role="button"]:has-text("Tiếp tục dưới tên")',
+            'button:has-text("Log in with Facebook")',
+            'a:has-text("Log in with Facebook")',
+        ]
+
+        clicked = False
+        for sel in sso_selectors:
+            loc = page.locator(sel).first
+            if await loc.count() > 0 and await loc.is_visible():
+                logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
+                try:
+                    async with page.context.expect_page(timeout=5000) as pinfo:
+                        await loc.click()
+                    popup = await pinfo.value
+                    await popup.wait_for_load_state("domcontentloaded")
+                    p_btn = popup.locator('div[role="button"]:has-text("Tiếp tục"), button:has-text("Tiếp tục"), text="Tiếp tục"').first
+                    if await p_btn.count() > 0 and await p_btn.is_visible():
+                        await p_btn.click()
+                    await popup.wait_for_event("close", timeout=10000)
+                    clicked = True
+                    break
+                except Exception:
+                    try:
+                        await loc.click()
+                        await page.wait_for_load_state("domcontentloaded")
+                        clicked = True
+                        break
+                    except Exception as e_click:
+                        logger.debug("Lỗi bấm nút SSO: %s", e_click)
+
+        if clicked:
+            await asyncio.sleep(4.0)
+            url = page.url.lower()
+
+    if "checkpoint" in url:
+        return False
+    if "login" in url:
+        return False
+
     return True
 
 
