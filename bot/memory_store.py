@@ -30,11 +30,38 @@ def normalize_text(text: str) -> str:
     return " ".join((text or "").strip().lower().split())
 
 
-def make_comment_key(author_name: str, comment_text: str, comment_id: str = "") -> str:
-    """Tạo khóa định danh duy nhất cho mỗi bình luận của khách."""
-    if comment_id and comment_id.strip():
-        return f"id:{comment_id.strip()}"
-    raw = f"{normalize_text(author_name)}|{normalize_text(comment_text)}"
+def make_comment_key(
+    author_name: str,
+    comment_text: str,
+    comment_id: str = "",
+    post_id: str = "",
+    dom_index: int = 0,
+) -> str:
+    """
+    Tạo khóa định danh duy nhất cho mỗi bình luận của khách.
+    - Kết hợp: post_id (selected_item_id) + domIndex + normalize_text(author_name) + normalize_text(comment_text).
+    - Giải quyết triệt để lỗi bỏ sót: Không bao giờ dùng riêng post_id làm comment_id khiến các bình luận khác
+      trong cùng bài viết bị trùng key và bị bỏ qua!
+    """
+    norm_author = normalize_text(author_name)
+    norm_text = normalize_text(comment_text)
+
+    # Ưu tiên tạo key kết hợp post_id + dom_index + author + text
+    if post_id and str(post_id).strip():
+        pid = str(post_id).strip()
+        raw = f"{pid}|{dom_index}|{norm_author}|{norm_text}"
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        return f"cmt:{pid}:{dom_index}:{digest}"
+
+    # Nếu có comment_id riêng biệt (không trùng post_id)
+    if comment_id and str(comment_id).strip():
+        cid = str(comment_id).strip()
+        raw = f"{cid}|{dom_index}|{norm_author}|{norm_text}"
+        digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
+        return f"id:{cid}:{digest}"
+
+    # Fallback cho trường hợp không có post_id (như trong unit test cơ bản)
+    raw = f"{dom_index}|{norm_author}|{norm_text}" if dom_index > 0 else f"{norm_author}|{norm_text}"
     digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:20]
     return f"hash:{digest}"
 
@@ -98,27 +125,54 @@ class BotMemoryStore:
         comment_text: str,
         has_page_reply_in_dom: bool = False,
         comment_id: str = "",
+        post_id: str = "",
+        dom_index: int = 0,
+        now_ts: Optional[float] = None,
     ) -> Tuple[bool, str]:
         """
         Kiểm tra xem bình luận này có cần trả lời hay không.
         Trả về (True/False, comment_key).
+        Quy tắc:
+        1. Tên tác giả là nhãn hệ thống -> Bỏ qua.
+        2. Nếu trên DOM thực tế ĐÃ CÓ câu trả lời của Page ngay dưới bình luận này (has_page_reply_in_dom == True) -> Bỏ qua.
+        3. Chấp nhận mọi bình luận của khách kể cả 1 ký tự ('.', icon, sticker, số, chữ ngắn).
+        4. Nếu trên DOM thực tế CHƯA CÓ câu trả lời của Page bên dưới (has_page_reply_in_dom == False):
+           Bắt buộc phải trả lời bình luận đó (trừ khi chính bình luận đó vừa được rep trong memory).
         """
         from bot.bot_config import clean_customer_name, is_system_label
         
-        # Nếu tên tác giả bị dính nhãn hệ thống (ví dụ: "Chỉ báo trạng thái online"), tuyệt đối không trả lời
+        # 1. Nếu tên tác giả bị dính nhãn hệ thống (ví dụ: "Chỉ báo trạng thái online"), tuyệt đối không trả lời
         if is_system_label(author_name):
             return False, ""
 
         clean_name = clean_customer_name(author_name)
         if clean_name == "bạn" and is_system_label(author_name):
             return False, ""
-        key = make_comment_key(clean_name, comment_text, comment_id)
-        if not normalize_text(comment_text):
-            return False, key
+
+        key = make_comment_key(
+            author_name=clean_name,
+            comment_text=comment_text,
+            comment_id=comment_id,
+            post_id=post_id,
+            dom_index=dom_index,
+        )
+
+        # 2. Nếu trên DOM thực tế đã có phản hồi của Page ngay dưới bình luận này -> Tuyệt đối không trả lời trùng
         if has_page_reply_in_dom:
             return False, key
+
+        # 3. Cho phép bình luận ngắn, sticker, emoji, dấu chấm:
+        # Chỉ từ chối khi bình luận hoàn toàn trống rỗng không có ký tự hay nội dung nào
+        norm_text = normalize_text(comment_text)
+        if not norm_text and not comment_text:
+            return False, key
+
+        # 4. Kiểm tra trong bộ nhớ:
+        # Nếu khóa định danh duy nhất của bình luận này đã nằm trong replied_comments:
         if key in self.data["replied_comments"]:
             return False, key
+
+        # Nếu chưa có phản hồi của Page trên DOM và chưa được lưu trong memory -> Bắt buộc trả lời!
         return True, key
 
     def prepare_comment_and_inbox_replies(

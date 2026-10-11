@@ -252,7 +252,87 @@ class TestDan86BotLogic(unittest.TestCase):
         self.assertEqual(action8, "WAIT_STAFF_REPLY", "Sau 3 tiếng im lặng kể từ lúc nhân viên chat, khách nhắn lại phải rep WAIT_STAFF_REPLY")
         self.assertIn("Anh Minh", reply8)
 
+    def test_05_multiple_comments_on_same_post_no_collision(self) -> None:
+        """
+        Kiểm tra sửa triệt để lỗi Miss bình luận trên cùng 1 bài viết:
+        - Trên cùng post_id='857984003420300', có nhiều bình luận từ các khách khác nhau.
+        - Sau khi rep bình luận #1 (Diễm Myy: '.'), bình luận #2 (Abegail Sarto: 'How much')
+          và bình luận #3 (Đức Trí: '1 năm Ib') KHÔNG được bị bỏ qua!
+        """
+        post_id = "857984003420300"
+        
+        # 1. Bình luận 1: Diễm Myy
+        should_rep1, key1 = self.memory.should_reply_comment(
+            author_name="Diễm Myy",
+            comment_text=".",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=0,
+        )
+        self.assertTrue(should_rep1, "Bình luận 1 của Diễm Myy phải được trả lời")
+        self.assertTrue(key1.startswith(f"cmt:{post_id}:0:"), f"Key 1 phải chứa post_id và dom_index 0: {key1}")
+        
+        # Bot trả lời bình luận 1
+        self.memory.mark_comment_replied(
+            comment_key=key1,
+            author_name="Diễm Myy",
+            comment_text=".",
+            public_reply="Dạ chào Diễm Myy...",
+            private_inbox_sent=True,
+            private_reply_text="Dạ shop chào Diễm Myy ạ...",
+        )
+        
+        # 2. Bình luận 2: Abegail Sarto trên CÙNG BÀI VIẾT (post_id) nhưng dom_index khác
+        should_rep2, key2 = self.memory.should_reply_comment(
+            author_name="Abegail Sarto",
+            comment_text="How much",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=2,
+        )
+        self.assertTrue(should_rep2, "Bình luận 2 của Abegail Sarto trên cùng bài viết KHÔNG ĐƯỢC BỊ BỎ QUA!")
+        self.assertNotEqual(key1, key2, "Hai bình luận trên cùng bài viết phải có key khác nhau!")
+        self.assertTrue(key2.startswith(f"cmt:{post_id}:2:"), f"Key 2 phải chứa post_id và dom_index 2: {key2}")
+
+        # 3. Cùng 1 khách bình luận nhiều lần ở các vị trí khác nhau trên bài viết
+        should_rep3, key3 = self.memory.should_reply_comment(
+            author_name="Diễm Myy",
+            comment_text="Shop còn hàng không?",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=4,
+        )
+        self.assertTrue(should_rep3, "Cùng 1 khách bình luận câu khác ở vị trí khác vẫn phải được trả lời nếu chưa có rep bên dưới!")
+        self.assertNotEqual(key1, key3)
+
+    def test_06_short_and_sticker_comments_handled(self) -> None:
+        """
+        Kiểm tra hỗ trợ đầy đủ mọi bình luận kể cả 1 ký tự, icon, sticker, số, chữ ngắn:
+        - Bình luận dấu chấm '.'
+        - Bình luận sticker '[Sticker / GIPHY]'
+        - Bình luận số '1'
+        - Bình luận 'Ib'
+        """
+        post_id = "1164344392784258"
+        for idx, (author, text) in enumerate([
+            ("Lệ Thuyền", "[Sticker / GIPHY]"),
+            ("Diễm Myy", "."),
+            ("Khách A", "1"),
+            ("Khách B", "Ib"),
+            ("Khách C", "❤️"),
+        ]):
+            should_rep, key = self.memory.should_reply_comment(
+                author_name=author,
+                comment_text=text,
+                has_page_reply_in_dom=False,
+                post_id=post_id,
+                dom_index=idx,
+            )
+            self.assertTrue(should_rep, f"Bình luận '{text}' của '{author}' không được bị bỏ qua!")
+            self.assertTrue(key.startswith(f"cmt:{post_id}:{idx}:"))
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
+
 

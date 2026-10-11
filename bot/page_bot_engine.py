@@ -103,7 +103,6 @@ async def create_bot_browser_context(
             storage_state=STORAGE_STATE_FILE,
             viewport={"width": 1440, "height": 900},
             locale="vi-VN",
-            user_agent=user_agent,
         )
         return browser, context
 
@@ -234,16 +233,58 @@ async def verify_logged_in(page: Page) -> bool:
 
 
 # ==============================================================================
+# ==============================================================================
 # PHẦN 1: QUÉT & TRẢ LỜI BÌNH LUẬN FACEBOOK + TỰ ĐỘNG INBOX NGƯỜI BÌNH LUẬN
 # ==============================================================================
+async def expand_all_comment_replies(page: Page) -> int:
+    """
+    Tự động bấm mở rộng các phản hồi bị ẩn dưới nút:
+    'Xem ... phản hồi', 'Xem thêm phản hồi', 'Xem 1 phản hồi', 'Xem thêm bình luận', 'View replies'
+    để kiểm tra chính xác 100% bình luận nào đã có Page trả lời.
+    """
+    expanded_count = 0
+    try:
+        see_more_selectors = [
+            'div[role="button"]:has-text("Xem"):has-text("phản hồi")',
+            'span:has-text("Xem"):has-text("phản hồi")',
+            'div[role="button"]:has-text("phản hồi")',
+            'span:has-text("phản hồi")',
+            'div[role="button"]:has-text("Xem thêm bình luận")',
+            'span:has-text("Xem thêm bình luận")',
+            'div[role="button"]:has-text("View"):has-text("repl")',
+        ]
+        for sel in see_more_selectors:
+            btns = page.locator(sel)
+            cnt = await btns.count()
+            for idx in range(min(cnt, 5)):
+                btn = btns.nth(idx)
+                if await btn.is_visible():
+                    txt = (await btn.inner_text() or "").strip().lower()
+                    if any(k in txt for k in ["phản hồi", "bình luận", "repl"]):
+                        try:
+                            await btn.click()
+                            expanded_count += 1
+                            await asyncio.sleep(0.8)
+                        except Exception:
+                            pass
+        if expanded_count > 0:
+            await human_sleep(1.0, 2.0)
+    except Exception as e:
+        logger.debug("Không thể mở rộng phản hồi bình luận: %s", e)
+    return expanded_count
+
+
 async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
     """
     Phân tích khung chi tiết bình luận bên phải của Meta Business Suite:
-    - Loại bỏ 100% các phần tử hệ thống ("Chỉ báo trạng thái online", "Đang hoạt động", v.v.)
-    - Lấy chính xác tên khách hàng (từ aria-label 'Bình luận dưới tên ...' hoặc link tác giả)
-    - Lấy nội dung bình luận sạch của khách
-    - Kiểm tra xem bình luận này đã có phản hồi của Fanpage bên dưới chưa
-    - Trả về index của article mục tiêu cần trả lời (`target_article_index`)
+    - Trích xuất Post ID từ tham số selected_item_id trong URL.
+    - Tìm và phân tích tất cả các bình luận của khách trên bài viết.
+    - Hỗ trợ đầy đủ mọi bình luận kể cả 1 ký tự ('.', emoji, icon, số, chữ ngắn).
+    - Nhận diện chính xác bình luận nào ngay bên dưới CHƯA có câu trả lời của Page (!hasReplyBelow).
+    - Đánh dấu data-attributes lên DOM để Playwright định vị chính xác:
+      + data-dan86-reply-target: article bình luận cần trả lời
+      + data-dan86-reply-btn: nút Trả lời lồng nhau (Reply)
+      + data-dan86-msg-btn: nút Nhắn tin / See Chat riêng
     """
     js_code = """
     (pageNames) => {
@@ -313,7 +354,6 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
 
             if (!authorName || isSystemString(authorName)) {
-                // Thử lấy từ button/link tên tác giả
                 const authorBtn = art.querySelector('div[role="button"]:not([aria-label]), a[role="link"], span[dir="auto"]');
                 if (authorBtn && authorBtn.innerText) {
                     const cand = authorBtn.innerText.trim();
@@ -333,21 +373,37 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 }
             }
 
-            // Trích xuất nội dung bình luận
+            // Trích xuất nội dung bình luận (cho phép bình luận 1 ký tự, icon, số, chữ ngắn)
             const lines = inner.split('\\n').map(s => s.trim()).filter(Boolean);
             const contentLines = lines.filter(l => {
                 const low = l.toLowerCase();
                 if (l === authorName || low.includes('tuần') || low.includes('ngày') || low.includes('phút') || low.includes('giờ') || l === '·') return false;
-                if (['trả lời', 'ẩn', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'thích', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả', '1', '2', '3'].includes(low)) return false;
+                if (['trả lời', 'reply', 'ẩn', 'hide', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'send message', 'thích', 'like', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả'].includes(low)) return false;
                 return true;
             });
-            const commentText = contentLines.join(" ").trim();
+            let commentText = contentLines.join(" ").trim();
+            if (!commentText) {
+                if (inner.includes('Sticker') || inner.includes('GIPHY') || inner.includes('sticker') || inner.includes('gif')) {
+                    commentText = "[Sticker / GIPHY]";
+                } else {
+                    commentText = ".";
+                }
+            }
 
             // Kiểm tra nút Trả lời
             const actionEls = Array.from(art.querySelectorAll('[role="button"], span, div')).filter(el => el.children.length === 0);
             const hasReplyBtn = actionEls.some(el => {
                 const t = (el.innerText || '').trim();
-                return t === 'Trả lời' || t === 'Reply';
+                const a = (el.getAttribute('aria-label') || '').trim();
+                return t === 'Trả lời' || t === 'Reply' || a === 'Trả lời' || a === 'Reply';
+            });
+
+            // Kiểm tra nút Tin nhắn / See Chat
+            const mBtnEl = actionEls.find(el => {
+                const t = (el.innerText || '').trim();
+                const a = (el.getAttribute('aria-label') || '').trim();
+                const combo = (t + ' ' + a).toLowerCase();
+                return combo.includes('see chat') || combo.includes('gửi tin nhắn') || combo.includes('nhắn tin') || combo.includes('send message') || combo.includes('message');
             });
 
             parsedComments.push({
@@ -356,46 +412,35 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 authorName: authorName || "bạn",
                 commentText: commentText,
                 hasReplyBtn: hasReplyBtn,
+                msgBtnText: mBtnEl ? ((mBtnEl.innerText || '').trim() || (mBtnEl.getAttribute('aria-label') || '').trim()) : "",
                 innerPreview: inner.slice(0, 100),
                 articleEl: art
             });
         }
 
-        // Tìm bình luận khách chưa có câu trả lời của Page
-        let target = null;
-        let targetArticleNode = null;
+        // Đánh giá xem bình luận nào có phản hồi của Page ngay bên dưới
         for (let j = 0; j < parsedComments.length; j++) {
             const item = parsedComments[j];
-            if (item.isPageReply) continue;
+            if (item.isPageReply) {
+                item.hasPageReply = true;
+                continue;
+            }
 
             let hasReplyBelow = false;
             if (j + 1 < parsedComments.length && parsedComments[j + 1].isPageReply) {
                 hasReplyBelow = true;
             }
-
-            if (!hasReplyBelow && item.hasReplyBtn && item.commentText) {
-                target = {
-                    author_name: item.authorName,
-                    comment_text: item.commentText,
-                    target_article_index: item.domIndex,
-                    has_page_reply: false,
-                    comment_id: ""
-                };
-                targetArticleNode = item.articleEl;
-                break;
-            }
+            item.hasPageReply = hasReplyBelow;
         }
 
-        if (!target && parsedComments.length > 0) {
-            const first = parsedComments.find(p => !p.isPageReply) || parsedComments[0];
-            target = {
-                author_name: first.authorName,
-                comment_text: first.commentText,
-                target_article_index: first.domIndex,
-                has_page_reply: true,
-                comment_id: ""
-            };
-            targetArticleNode = first.articleEl;
+        // Lấy danh sách tất cả các bình luận khách chưa có Page trả lời
+        const unrepliedList = parsedComments.filter(c => !c.isPageReply && !c.hasPageReply && c.hasReplyBtn);
+
+        let target = null;
+        let targetArticleNode = null;
+        if (unrepliedList.length > 0) {
+            target = unrepliedList[0];
+            targetArticleNode = target.articleEl;
         }
 
         // Đánh dấu trực tiếp các data-attributes lên DOM để Playwright định vị chính xác 100%
@@ -406,7 +451,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         if (targetArticleNode) {
             targetArticleNode.setAttribute('data-dan86-reply-target', 'true');
 
-            // 1. Tìm nút Trả lời / Reply
+            // 1. Đánh dấu nút Trả lời / Reply
             const actionEls = Array.from(targetArticleNode.querySelectorAll('[role="button"], span, div')).filter(el => el.children.length === 0);
             const rBtn = actionEls.find(el => {
                 const t = (el.innerText || '').trim();
@@ -418,7 +463,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 clickNode.setAttribute('data-dan86-reply-btn', 'true');
             }
 
-            // 2. Tìm nút Gửi tin nhắn / Nhắn tin / Message / See Chat
+            // 2. Đánh dấu nút Gửi tin nhắn / Nhắn tin / Message / See Chat
             const mBtn = actionEls.find(el => {
                 const t = (el.innerText || '').trim();
                 const a = (el.getAttribute('aria-label') || '').trim();
@@ -432,18 +477,32 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         }
 
         const urlParams = new URLSearchParams(window.location.search);
-        const commentId = urlParams.get("selected_item_id") || urlParams.get("comment_id") || "";
+        const postId = urlParams.get("selected_item_id") || urlParams.get("comment_id") || "";
+
         if (target) {
-            target.comment_id = commentId;
-            return target;
+            return {
+                post_id: postId,
+                author_name: target.authorName,
+                comment_text: target.commentText,
+                target_article_index: target.domIndex,
+                has_page_reply: false,
+                has_msg_btn: !!target.msgBtnText,
+                msg_btn_text: target.msgBtnText,
+                unreplied_count: unrepliedList.length,
+                total_comments: parsedComments.length
+            };
         }
 
         return {
+            post_id: postId,
             author_name: "bạn",
             comment_text: "",
-            comment_id: commentId,
-            has_page_reply: false,
-            target_article_index: -1
+            target_article_index: -1,
+            has_page_reply: parsedComments.length > 0,
+            has_msg_btn: false,
+            msg_btn_text: "",
+            unreplied_count: 0,
+            total_comments: parsedComments.length
         };
     }
     """
@@ -454,24 +513,127 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
     except Exception as e:
         logger.debug("Không thể phân tích DOM bình luận: %s", e)
         return {
+            "post_id": "",
             "author_name": "bạn",
             "comment_text": "",
-            "comment_id": "",
-            "has_page_reply": False,
             "target_article_index": -1,
+            "has_page_reply": False,
+            "has_msg_btn": False,
+            "msg_btn_text": "",
+            "unreplied_count": 0,
+            "total_comments": 0,
         }
+
+
+async def send_inbox_via_messenger_search(
+    page: Page,
+    author_name: str,
+    private_reply_text: str,
+) -> bool:
+    """
+    Fallback gửi tin nhắn riêng cho khách khi nút dưới bình luận không bấm được:
+    1. Chuyển sang Tab Messenger Inbox (META_INBOX_MESSENGER_URL).
+    2. Tìm hội thoại có tên khách author_name ở cột trái (hoặc gõ vào ô tìm kiếm).
+    3. Nhấp vào hội thoại và gửi private_reply_text.
+    4. Quay lại tab Bình luận (META_INBOX_COMMENTS_URL).
+    """
+    clean_name = clean_customer_name(author_name)
+    if not clean_name or clean_name == "bạn":
+        logger.info("Tên khách không xác định ('%s'), bỏ qua fallback Messenger.", author_name)
+        return False
+
+    try:
+        logger.info("Chuyển đến Messenger để tìm kiếm hội thoại của [%s]...", clean_name)
+        await page.goto(META_INBOX_MESSENGER_URL, wait_until="domcontentloaded", timeout=45000)
+        await human_sleep(3.5, 5.0)
+
+        # 1. Thử tìm kiếm trực tiếp trong danh sách hội thoại cột trái
+        thread_items = page.locator('[role="navigation"] [role="listitem"], [role="grid"] [role="row"], div[role="listitem"]')
+        found_item = False
+        item_count = min(await thread_items.count(), 15)
+
+        for i in range(item_count):
+            item = thread_items.nth(i)
+            txt = (await item.inner_text() or "").lower()
+            if clean_name.lower() in txt:
+                logger.info("Tìm thấy hội thoại của [%s] trong danh sách gần nhất!", clean_name)
+                await item.click()
+                found_item = True
+                await human_sleep(2.0, 3.5)
+                break
+
+        # 2. Nếu không thấy trong danh sách gần nhất, dùng ô tìm kiếm
+        if not found_item:
+            search_box = page.locator('input[placeholder*="Tìm kiếm"], input[placeholder*="Search"]').first
+            if await search_box.count() > 0 and await search_box.is_visible():
+                logger.info("Dùng ô tìm kiếm Messenger gõ tên: %s", clean_name)
+                await search_box.click()
+                await search_box.fill(clean_name)
+                await human_sleep(2.5, 4.0)
+
+                result_items = page.locator('[role="navigation"] [role="listitem"], [role="listbox"] [role="option"]')
+                if await result_items.count() > 0:
+                    first_res = result_items.first
+                    if await first_res.is_visible():
+                        await first_res.click()
+                        found_item = True
+                        await human_sleep(2.0, 3.5)
+
+        # 3. Gửi tin nhắn nếu đã mở được hội thoại
+        if found_item:
+            composer = page.locator(
+                'div[role="textbox"][contenteditable="true"], '
+                'textarea[placeholder*="tin nhắn"], '
+                'textarea[placeholder*="message"]'
+            ).last
+            if await composer.count() > 0 and await composer.is_visible():
+                await type_human_like(page, composer, private_reply_text)
+                await page.keyboard.press("Enter")
+                await human_sleep(2.0, 3.5)
+                logger.info("Đã gửi tin nhắn riêng cho [%s] qua Fallback Messenger thành công!", clean_name)
+
+                # Quay lại tab bình luận
+                await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+                await human_sleep(3.0, 5.0)
+                return True
+
+        logger.warning("Không tìm thấy hội thoại Messenger cho khách [%s].", clean_name)
+        # Quay lại tab bình luận
+        await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+        await human_sleep(3.0, 5.0)
+        return False
+
+    except Exception as e:
+        logger.warning("Lỗi trong fallback Messenger cho [%s]: %s", clean_name, e)
+        try:
+            await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+            await human_sleep(2.0, 3.5)
+        except Exception:
+            pass
+        return False
 
 
 async def send_private_inbox_to_commenter(
     page: Page,
     target_article: Optional[Locator],
     private_reply_text: str,
+    author_name: str = "",
     dry_run: bool = False,
 ) -> bool:
     """
-    Bấm nút 'Gửi tin nhắn' / 'Nhắn tin' (Message / Send message) ngay dưới bình luận của khách
-    trong Meta Business Suite và gửi tin nhắn tư vấn riêng vào Inbox cho người đó.
+    Bấm nút 'Gửi tin nhắn' / 'Nhắn tin' / 'See Chat' dưới bình luận của khách
+    để gửi tin nhắn riêng vào Inbox cho người đó.
+    Xử lý đầy đủ 3 trường hợp thực tế:
+    1. Hiện popup modal (div[role="dialog"]): nhập text, bấm Gửi.
+    2. Nút 'See Chat' (đã có thread Messenger): mở khung chat, nhập text vào composer,
+       gửi, sau đó quay lại tab Bình luận (META_INBOX_COMMENTS_URL).
+    3. Fallback (không có nút hoặc không gửi được): chuyển sang tab Messenger,
+       tìm hội thoại theo author_name, gửi tin nhắn, sau đó quay lại tab Bình luận.
     """
+    if dry_run:
+        logger.info("[DRY-RUN] Sẽ gửi tin nhắn riêng cho [%s]: %s", author_name or "khách", private_reply_text[:80])
+        return True
+
     msg_btn_selectors = [
         '[data-dan86-msg-btn="true"]',
         'div[role="button"]:has-text("See Chat")',
@@ -489,85 +651,114 @@ async def send_private_inbox_to_commenter(
         '[aria-label*="Send message"]',
     ]
 
-    clicked_modal = False
+    clicked_btn = False
+    btn_text_lower = ""
 
     # 1. Ưu tiên tìm nút đã được gán data-dan86-msg-btn từ JS
     marked_msg_btn = page.locator('[data-dan86-msg-btn="true"]').first
     if await marked_msg_btn.count() > 0 and await marked_msg_btn.is_visible():
-        if dry_run:
-            logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn/See Chat' riêng cho người comment: %s", private_reply_text[:80])
-            return True
         try:
+            btn_text_lower = (await marked_msg_btn.inner_text() or "").lower()
             await marked_msg_btn.click()
-            clicked_modal = True
-            await human_sleep(1.5, 2.8)
+            clicked_btn = True
+            await human_sleep(2.0, 3.5)
         except Exception as e_mbtn:
             logger.debug("Lỗi bấm nút tin nhắn đánh dấu: %s", e_mbtn)
 
     # 2. Tìm nút trong chính article bình luận của khách
-    if not clicked_modal and target_article is not None:
+    if not clicked_btn and target_article is not None:
         for sel in msg_btn_selectors:
             loc = target_article.locator(sel).first
             if await loc.count() > 0 and await loc.is_visible():
-                if dry_run:
-                    logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn/See Chat' riêng cho người comment: %s", private_reply_text[:80])
-                    return True
                 try:
+                    btn_text_lower = (await loc.inner_text() or "").lower()
                     await loc.click()
-                    clicked_modal = True
-                    await human_sleep(1.5, 2.8)
+                    clicked_btn = True
+                    await human_sleep(2.0, 3.5)
                     break
                 except Exception:
                     continue
 
-    # 3. Fallback tìm nút trên toàn trang nếu trong article không có
-    if not clicked_modal:
+    # 3. Fallback tìm nút trên toàn trang
+    if not clicked_btn:
         for sel in msg_btn_selectors:
             loc = page.locator(sel).first
             if await loc.count() > 0 and await loc.is_visible():
-                if dry_run:
-                    logger.info("[DRY-RUN] Sẽ bấm nút 'Gửi tin nhắn/See Chat' riêng cho người comment: %s", private_reply_text[:80])
-                    return True
                 try:
+                    btn_text_lower = (await loc.inner_text() or "").lower()
                     await loc.click()
-                    clicked_modal = True
-                    await human_sleep(1.5, 2.8)
+                    clicked_btn = True
+                    await human_sleep(2.0, 3.5)
                     break
                 except Exception:
                     continue
 
-    if not clicked_modal:
-        logger.info("Không thấy nút 'Gửi tin nhắn/See Chat' dưới bình luận (có thể bình luận quá hạn 7 ngày theo chính sách Meta, hoặc khách chặn tin nhắn).")
-        return False
-
-    # Tìm ô nhập tin nhắn trong hộp thoại (Modal) hoặc khung gửi tin nhắn riêng vừa bật lên
-    modal_input_selectors = [
-        'div[role="dialog"] div[role="textbox"][contenteditable="true"]',
-        'div[role="dialog"] textarea',
-        'div[role="textbox"][contenteditable="true"]',
-    ]
-
-    for input_sel in modal_input_selectors:
-        boxes = page.locator(input_sel)
-        count = await boxes.count()
-        if count > 0:
-            target_box = boxes.last
-            if await target_box.is_visible():
-                await type_human_like(page, target_box, private_reply_text)
-                send_btn = page.locator(
-                    'div[role="dialog"] [aria-label*="Gửi"], '
-                    'div[role="dialog"] [aria-label*="Send"], '
-                    'div[role="dialog"] div[role="button"]:has-text("Gửi"), '
-                    'div[role="dialog"] div[role="button"]:has-text("Send")'
+    # TRƯỜNG HỢP 1: Hiện popup dialog (div[role="dialog"])
+    dialogs = page.locator('div[role="dialog"]')
+    if await dialogs.count() > 0:
+        dialog = dialogs.last
+        if await dialog.is_visible():
+            dialog_box = dialog.locator('div[role="textbox"][contenteditable="true"], textarea').first
+            if await dialog_box.count() > 0 and await dialog_box.is_visible():
+                await type_human_like(page, dialog_box, private_reply_text)
+                send_btn = dialog.locator(
+                    '[aria-label*="Gửi"], [aria-label*="Send"], '
+                    'div[role="button"]:has-text("Gửi"), div[role="button"]:has-text("Send"), '
+                    'button:has-text("Gửi"), button:has-text("Send")'
                 ).last
                 if await send_btn.count() > 0 and await send_btn.is_visible():
                     await send_btn.click()
                 else:
                     await page.keyboard.press("Enter")
                 await human_sleep(2.0, 3.5)
-                logger.info("Đã tự động gửi Inbox riêng cho người bình luận thành công!")
+                logger.info("Đã gửi tin nhắn riêng cho [%s] qua Popup Modal thành công!", author_name)
                 return True
 
+    # TRƯỜNG HỢP 2: Bấm nút 'See Chat' (chuyển sang giao diện chat của khách)
+    composer_selectors = [
+        'div[role="textbox"][contenteditable="true"]',
+        'textarea[placeholder*="tin nhắn"]',
+        'textarea[placeholder*="message"]',
+    ]
+    is_chat_view = False
+    current_url = page.url.lower()
+    if "messenger" in current_url or "see chat" in btn_text_lower:
+        is_chat_view = True
+
+    if clicked_btn or is_chat_view:
+        for c_sel in composer_selectors:
+            composers = page.locator(c_sel)
+            cnt = await composers.count()
+            if cnt > 0:
+                target_composer = composers.last
+                if await target_composer.is_visible():
+                    aria = (await target_composer.get_attribute("aria-label") or "").lower()
+                    placeholder = (await target_composer.get_attribute("placeholder") or "").lower()
+                    if not any(k in aria or k in placeholder for k in ["bình luận", "comment"]):
+                        await type_human_like(page, target_composer, private_reply_text)
+                        await page.keyboard.press("Enter")
+                        await human_sleep(2.0, 3.5)
+                        logger.info("Đã gửi tin nhắn riêng cho [%s] qua giao diện See Chat thành công!", author_name)
+
+                        # Quay lại tab Bình luận nếu URL đã chuyển sang Messenger
+                        if "messenger" in page.url.lower():
+                            logger.info("Đang quay lại Tab Bình luận Facebook để tiếp tục quét...")
+                            await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+                            await human_sleep(3.0, 5.0)
+                        return True
+
+    # TRƯỜNG HỢP 3: Fallback chuyển sang tab Messenger tìm kiếm author_name
+    if author_name and author_name != "bạn":
+        logger.info("Kích hoạt fallback: Chuyển sang Messenger để tìm và nhắn riêng cho [%s]...", author_name)
+        sent_fallback = await send_inbox_via_messenger_search(
+            page=page,
+            author_name=author_name,
+            private_reply_text=private_reply_text,
+        )
+        if sent_fallback:
+            return True
+
+    logger.warning("Không thể gửi tin nhắn riêng cho khách [%s] qua cả 3 phương thức.", author_name)
     return False
 
 
@@ -579,10 +770,14 @@ async def process_facebook_comments_tab(
     """
     Quét tab Bình luận Facebook trên Meta Business Suite:
     1. Lọc sạch tên khách hàng (chống lấy nhầm 'Chỉ báo trạng thái online').
-    2. Bấm chính xác nút 'Trả lời' dưới bình luận của khách để mở nested reply (không đăng thành cmt gốc bài viết).
-    3. Thả Like bình luận.
-    4. Random câu trả lời công khai lồng dưới bình luận (1 lần duy nhất).
-    5. Tự động bấm 'Gửi tin nhắn' để Inbox riêng cho người bình luận đó (1 lần duy nhất).
+    2. Tự động mở rộng các phản hồi bị ẩn dưới nút 'Xem ... phản hồi'.
+    3. Lặp xử lý HẾT tất cả bình luận chưa trả lời trong bài viết đang mở.
+    4. Thả Like bình luận.
+    5. Random câu trả lời công khai lồng dưới bình luận (Nested Reply).
+    6. Tự động gửi tin nhắn riêng (Inbox) cho người bình luận đó:
+       - Hỗ trợ Popup Modal
+       - Hỗ trợ giao diện See Chat
+       - Hỗ trợ Fallback tìm kiếm trong Messenger
     """
     replied_count = 0
     logger.info("Đang kiểm tra Tab Bình luận Facebook: %s", META_INBOX_COMMENTS_URL)
@@ -613,7 +808,7 @@ async def process_facebook_comments_tab(
         return 0
 
     total_items = min(await items_locator.count(), MAX_THREADS_PER_CYCLE)
-    logger.info("Tìm thấy %d mục bình luận cần kiểm tra.", total_items)
+    logger.info("Tìm thấy %d mục bài viết có bình luận cần kiểm tra.", total_items)
 
     for i in range(total_items):
         try:
@@ -625,135 +820,155 @@ async def process_facebook_comments_tab(
             await item.click()
             await human_sleep(2.0, 3.5)
 
-            info = await inspect_comment_panel(page)
-            author_name = info.get("author_name") or "bạn"
-            comment_text = info.get("comment_text") or preview_text
-            comment_id = info.get("comment_id") or ""
-            has_page_reply = bool(info.get("has_page_reply", False))
-            target_art_idx = int(info.get("target_article_index", -1))
+            # Lặp xử lý HẾT tất cả bình luận chưa trả lời trong bài viết đang mở
+            max_comments_per_post = 10
+            post_comment_cycle = 0
 
-            if is_page_author_name(author_name):
-                continue
+            while post_comment_cycle < max_comments_per_post:
+                post_comment_cycle += 1
 
-            should_rep, comment_key = memory.should_reply_comment(
-                author_name=author_name,
-                comment_text=comment_text,
-                has_page_reply_in_dom=has_page_reply,
-                comment_id=comment_id,
-            )
+                # Tự động mở rộng các phản hồi bị ẩn để kiểm tra chính xác 100%
+                await expand_all_comment_replies(page)
 
-            if not should_rep:
-                logger.debug("Bỏ qua bình luận của %s (đã trả lời trước đó hoặc không hợp lệ).", author_name)
-                continue
+                info = await inspect_comment_panel(page)
+                author_name = info.get("author_name") or "bạn"
+                comment_text = info.get("comment_text") or preview_text
+                post_id = info.get("post_id") or ""
+                has_page_reply = bool(info.get("has_page_reply", False))
+                target_art_idx = int(info.get("target_article_index", -1))
 
-            public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(author_name)
-            logger.info("Phát hiện bình luận mới từ [%s]: %s", author_name, comment_text[:80])
+                # Nếu bài viết này không còn bình luận nào chưa trả lời -> Chuyển sang bài viết tiếp theo
+                if target_art_idx < 0 or has_page_reply:
+                    logger.debug("Bài viết này không còn bình luận nào cần trả lời.")
+                    break
 
-            if dry_run:
-                logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
-                logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
-                replied_count += 1
-                continue
+                if is_page_author_name(author_name):
+                    break
 
-            # Xác định article bình luận mục tiêu
-            target_art: Optional[Locator] = None
-            marked_target = page.locator('[data-dan86-reply-target="true"]').first
-            if await marked_target.count() > 0 and await marked_target.is_visible():
-                target_art = marked_target
-            elif target_art_idx >= 0:
-                all_arts = page.locator('[role="article"]')
-                if await all_arts.count() > target_art_idx:
-                    target_art = all_arts.nth(target_art_idx)
+                should_rep, comment_key = memory.should_reply_comment(
+                    author_name=author_name,
+                    comment_text=comment_text,
+                    has_page_reply_in_dom=has_page_reply,
+                    post_id=post_id,
+                    dom_index=target_art_idx,
+                )
 
-            # Bước 1: Thả Like bình luận của khách (nếu có nút Thích chưa bấm trong target_art)
-            if target_art is not None:
-                like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
-                if await like_btn.count() > 0 and await like_btn.is_visible():
+                if not should_rep:
+                    logger.debug("Bỏ qua bình luận của %s (đã trả lời trước đó hoặc không hợp lệ).", author_name)
+                    break
+
+                public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(author_name)
+                logger.info(
+                    "Phát hiện bình luận mới từ [%s] (Post ID: %s, DOM Index: %d, Còn %d cmt chưa rep): %s",
+                    author_name,
+                    post_id,
+                    target_art_idx,
+                    info.get("unreplied_count", 1),
+                    comment_text[:80],
+                )
+
+                if dry_run:
+                    logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
+                    logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
+                    replied_count += 1
+                    break
+
+                # Xác định article bình luận mục tiêu
+                target_art: Optional[Locator] = None
+                marked_target = page.locator('[data-dan86-reply-target="true"]').first
+                if await marked_target.count() > 0 and await marked_target.is_visible():
+                    target_art = marked_target
+                elif target_art_idx >= 0:
+                    all_arts = page.locator('[role="article"]')
+                    if await all_arts.count() > target_art_idx:
+                        target_art = all_arts.nth(target_art_idx)
+
+                # Bước 1: Thả Like bình luận của khách
+                if target_art is not None:
+                    like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
+                    if await like_btn.count() > 0 and await like_btn.is_visible():
+                        try:
+                            await like_btn.click()
+                            await human_sleep(0.8, 1.5)
+                        except Exception:
+                            pass
+
+                # Bước 2: Bấm chính xác nút "Trả lời" (Reply) của bình luận khách để mở nested reply!
+                reply_clicked = False
+                marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
+                if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
                     try:
-                        await like_btn.click()
-                        await human_sleep(0.8, 1.5)
-                    except Exception:
-                        pass
-
-            # Bước 2: Bấm chính xác nút "Trả lời" (Reply) của bình luận khách để mở nested reply!
-            reply_clicked = False
-            marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
-            if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
-                try:
-                    await marked_reply_btn.click()
-                    reply_clicked = True
-                    await human_sleep(1.2, 2.2)
-                except Exception as e_reply:
-                    logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
-
-            if not reply_clicked and target_art is not None:
-                reply_btn = target_art.locator(
-                    'div[role="button"]:has-text("Trả lời"), '
-                    'span:has-text("Trả lời"), '
-                    'div[role="button"]:has-text("Reply")'
-                ).first
-                if await reply_btn.count() > 0 and await reply_btn.is_visible():
-                    try:
-                        await reply_btn.click()
+                        await marked_reply_btn.click()
                         reply_clicked = True
                         await human_sleep(1.2, 2.2)
                     except Exception as e_reply:
-                        logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
+                        logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
 
-            # Tìm ô nhập phản hồi lồng nhau cấp 2 (nested reply box)
-            # Ưu tiên 1: Focus box sau khi click Reply
-            nested_box = page.locator('div[role="textbox"]:focus').first
+                if not reply_clicked and target_art is not None:
+                    reply_btn = target_art.locator(
+                        'div[role="button"]:has-text("Trả lời"), '
+                        'span:has-text("Trả lời"), '
+                        'div[role="button"]:has-text("Reply")'
+                    ).first
+                    if await reply_btn.count() > 0 and await reply_btn.is_visible():
+                        try:
+                            await reply_btn.click()
+                            reply_clicked = True
+                            await human_sleep(1.2, 2.2)
+                        except Exception as e_reply:
+                            logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
 
-            # Ưu tiên 2: Ô có aria-label Trả lời với vai trò
-            if await nested_box.count() == 0 or not await nested_box.is_visible():
-                nested_box = page.locator(
-                    'div[role="textbox"][aria-label*="Trả lời với vai trò"], '
-                    'div[role="textbox"][aria-label*="Reply as"], '
-                    'div[role="textbox"][aria-label*="Viết câu trả lời"]'
-                ).first
+                # Tìm ô nhập phản hồi lồng nhau cấp 2 (nested reply box)
+                nested_box = page.locator('div[role="textbox"]:focus').first
+                if await nested_box.count() == 0 or not await nested_box.is_visible():
+                    nested_box = page.locator(
+                        'div[role="textbox"][aria-label*="Trả lời với vai trò"], '
+                        'div[role="textbox"][aria-label*="Reply as"], '
+                        'div[role="textbox"][aria-label*="Viết câu trả lời"]'
+                    ).first
 
-            # Ưu tiên 3: Ô textbox nằm ngay bên trong hoặc kế cận target_art
-            if (await nested_box.count() == 0 or not await nested_box.is_visible()) and target_art is not None:
-                nested_box = target_art.locator('div[role="textbox"]').first
+                if (await nested_box.count() == 0 or not await nested_box.is_visible()) and target_art is not None:
+                    nested_box = target_art.locator('div[role="textbox"]').first
 
-            # CHỐNG GÕ NHẦM Ô BÌNH LUẬN GỐC CỦA BÀI VIẾT:
-            is_valid_nested_box = False
-            if await nested_box.count() > 0 and await nested_box.is_visible():
-                box_aria = (await nested_box.get_attribute("aria-label") or "").lower()
-                box_placeholder = (await nested_box.get_attribute("placeholder") or "").lower()
-                if "bình luận dưới tên" in box_aria or "viết bình luận" in box_placeholder:
-                    logger.warning("Phát hiện ô bình luận bài viết cấp 1! Bỏ qua để không đăng nhầm cmt cấp 1!")
-                    is_valid_nested_box = False
+                is_valid_nested_box = False
+                if await nested_box.count() > 0 and await nested_box.is_visible():
+                    box_aria = (await nested_box.get_attribute("aria-label") or "").lower()
+                    box_placeholder = (await nested_box.get_attribute("placeholder") or "").lower()
+                    if "bình luận dưới tên" in box_aria or "viết bình luận" in box_placeholder:
+                        logger.warning("Phát hiện ô bình luận bài viết cấp 1! Bỏ qua để không đăng nhầm cmt cấp 1!")
+                        is_valid_nested_box = False
+                    else:
+                        is_valid_nested_box = True
+
+                if is_valid_nested_box:
+                    await type_human_like(page, nested_box, public_reply)
+                    await page.keyboard.press("Enter")
+                    await human_sleep(2.5, 4.0)
+                    logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: %s).", author_name, reply_clicked)
+
+                    # Bước 3: Tự động gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
+                    inbox_sent = await send_private_inbox_to_commenter(
+                        page=page,
+                        target_article=target_art,
+                        private_reply_text=private_inbox_reply,
+                        author_name=author_name,
+                        dry_run=dry_run,
+                    )
+
+                    # Lưu vào bộ nhớ với khóa định danh kết hợp post_id + dom_index
+                    memory.mark_comment_replied(
+                        comment_key=comment_key,
+                        author_name=author_name,
+                        comment_text=comment_text,
+                        public_reply=public_reply,
+                        private_inbox_sent=inbox_sent,
+                        private_reply_text=private_inbox_reply,
+                    )
+                    replied_count += 1
+                    await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
                 else:
-                    is_valid_nested_box = True
-
-            if is_valid_nested_box:
-                await type_human_like(page, nested_box, public_reply)
-                await page.keyboard.press("Enter")
-                await human_sleep(2.5, 4.0)
-                logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: %s).", author_name, reply_clicked)
-
-                # Bước 3: Tự động bấm Gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
-                inbox_sent = await send_private_inbox_to_commenter(
-                    page=page,
-                    target_article=target_art,
-                    private_reply_text=private_inbox_reply,
-                    dry_run=dry_run,
-                )
-
-                # Lưu vào bộ nhớ để không bao giờ trả lời lặp lại bình luận này
-                memory.mark_comment_replied(
-                    comment_key=comment_key,
-                    author_name=author_name,
-                    comment_text=comment_text,
-                    public_reply=public_reply,
-                    private_inbox_sent=inbox_sent,
-                    private_reply_text=private_inbox_reply,
-                )
-                replied_count += 1
-                await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
-            else:
-                logger.warning("Không tìm thấy ô nhập nested reply hợp lệ cho bình luận của [%s].", author_name)
+                    logger.warning("Không tìm thấy ô nhập nested reply hợp lệ cho bình luận của [%s].", author_name)
+                    break
 
         except Exception as e:
             logger.warning("Lỗi khi xử lý bình luận thứ %d: %s", i, e)
