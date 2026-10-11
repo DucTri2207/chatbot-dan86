@@ -1,0 +1,69 @@
+name: DAN86 Fanpage Bot 24-7 VPS
+
+on:
+  workflow_dispatch:
+  schedule:
+    # Watchdog tự động kiểm tra và giữ máy luôn chạy 24/24
+    - cron: "*/30 * * * *"
+
+# Đảm bảo tại mỗi thời điểm chỉ có duy nhất 1 con VPS chạy trực Page (không bị chồng chéo 2 bot)
+concurrency:
+  group: dan86-fanpage-bot-singleton
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+  actions: write
+
+jobs:
+  truc-page-24-7:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: 1. Tải mã nguồn dự án
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 1
+
+      - name: 2. Cài đặt Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: 3. Cài đặt Playwright & Trình duyệt Chromium trên VPS Linux
+        run: |
+          pip install -r requirements.txt
+          playwright install --with-deps chromium
+
+      - name: 4. Chạy Bot Trực Fanpage DAN86 (Ca làm việc 5 tiếng 20 phút)
+        env:
+          FB_STORAGE_STATE: ${{ secrets.FB_STORAGE_STATE }}
+          META_INBOX_URL: ${{ vars.META_INBOX_URL || 'https://business.facebook.com/latest/inbox/all' }}
+          META_MESSENGER_URL: ${{ vars.META_MESSENGER_URL || 'https://business.facebook.com/latest/inbox/messenger' }}
+          META_COMMENTS_URL: ${{ vars.META_COMMENTS_URL || 'https://business.facebook.com/latest/inbox/facebook' }}
+        run: |
+          python 2_chay_bot_truc_page.py --headless --max-minutes 320
+
+      - name: 5. Lưu bộ nhớ trạng thái hội thoại (bot_memory.json) sang ca sau
+        if: always()
+        run: |
+          if [ -f "state/bot_memory.json" ]; then
+            git config user.name "dan86-bot"
+            git config user.email "bot@dan86.vn"
+            git add state/bot_memory.json
+            if ! git diff --staged --quiet; then
+              git commit -m "chore: cap nhat bo nho bot [skip ci]"
+              git pull --rebase origin master || true
+              git push origin HEAD:master || true
+            fi
+          fi
+
+      - name: 6. Tự động gọi Ca VPS tiếp theo nối đuôi 24/24
+        if: always()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh workflow run vps_bot_24_7.yml || true
+
