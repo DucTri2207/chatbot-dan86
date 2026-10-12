@@ -2,11 +2,11 @@
   "running": true,
   "pid": 3010,
   "mode": "live",
-  "cycle": 129,
+  "cycle": 130,
   "headless": true,
   "started_at": 1791798534.089309,
-  "last_heartbeat": 1791804250.7698307,
-  "last_heartbeat_str": "2026-10-12 11:24:10",
+  "last_heartbeat": 1791804286.002396,
+  "last_heartbeat_str": "2026-10-12 11:24:46",
   "stats": {
     "comments_replied": 35,
     "private_inboxes_from_comment": 20,
@@ -14,14 +14,6 @@
     "wait_staff_replies": 1
   },
   "recent_logs": [
-    "2026-10-12 11:19:53,281 [INFO] Chưa tìm thấy cuộc hội thoại nào trong danh sách Messenger.",
-    "2026-10-12 11:19:53,281 [INFO] Hoàn tất chu kỳ #121: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 35, 'private_inboxes_from_comment': 20, 'first_inbox_replies': 0, 'wait_staff_replies': 1}",
-    "2026-10-12 11:19:53,283 [INFO] Nghỉ 17 giây trước chu kỳ quét tiếp theo...",
-    "2026-10-12 11:20:10,178 [INFO] --- Bắt đầu chu kỳ quét #122 ---",
-    "2026-10-12 11:20:10,178 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
-    "2026-10-12 11:20:15,950 [INFO] Chưa tìm thấy danh sách bình luận mới nào trong hộp thư.",
-    "2026-10-12 11:20:15,950 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
-    "2026-10-12 11:20:20,351 [INFO] Chưa tìm thấy cuộc hội thoại nào trong danh sách Messenger.",
     "2026-10-12 11:20:20,351 [INFO] Hoàn tất chu kỳ #122: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 35, 'private_inboxes_from_comment': 20, 'first_inbox_replies': 0, 'wait_staff_replies': 1}",
     "2026-10-12 11:20:20,353 [INFO] Nghỉ 22 giây trước chu kỳ quét tiếp theo...",
     "2026-10-12 11:20:42,453 [INFO] --- Bắt đầu chu kỳ quét #123 ---",
@@ -73,6 +65,14 @@
     "2026-10-12 11:24:06,391 [INFO] Chưa tìm thấy danh sách bình luận mới nào trong hộp thư.",
     "2026-10-12 11:24:06,391 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
     "2026-10-12 11:24:10,768 [INFO] Chưa tìm thấy cuộc hội thoại nào trong danh sách Messenger.",
-    "2026-10-12 11:24:10,768 [INFO] Hoàn tất chu kỳ #129: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 35, 'private_inboxes_from_comment': 20, 'first_inbox_replies': 0, 'wait_staff_replies': 1}"
+    "2026-10-12 11:24:10,768 [INFO] Hoàn tất chu kỳ #129: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 35, 'private_inboxes_from_comment': 20, 'first_inbox_replies': 0, 'wait_staff_replies': 1}",
+    "2026-10-12 11:24:12,147 [INFO] Đã đồng bộ Live Status & Memory lên GitHub VPS thành công (Lần 1).",
+    "2026-10-12 11:24:12,147 [INFO] Nghỉ 24 giây trước chu kỳ quét tiếp theo...",
+    "2026-10-12 11:24:36,213 [INFO] --- Bắt đầu chu kỳ quét #130 ---",
+    "2026-10-12 11:24:36,214 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
+    "2026-10-12 11:24:41,458 [INFO] Chưa tìm thấy danh sách bình luận mới nào trong hộp thư.",
+    "2026-10-12 11:24:41,458 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
+    "2026-10-12 11:24:46,001 [INFO] Chưa tìm thấy cuộc hội thoại nào trong danh sách Messenger.",
+    "2026-10-12 11:24:46,001 [INFO] Hoàn tất chu kỳ #130: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 35, 'private_inboxes_from_comment': 20, 'first_inbox_replies': 0, 'wait_staff_replies': 1}"
   ]
 }
