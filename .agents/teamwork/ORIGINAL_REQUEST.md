@@ -115,3 +115,64 @@ Integrity mode: development
 - [ ] 100% Unit Tests PASS không có lỗi hồi quy.
 - [ ] Khách hàng khác ngoài Đức Trí được bảo vệ 100% bởi TEST_ONLY_AUTHOR_WHITELIST.
 - [ ] VPS GitHub Actions chạy ổn định và đồng bộ memory an toàn.
+
+
+## Follow-up — 2026-10-12T13:37:23Z
+
+This is a single self-contained fix; keep it small and focused.
+
+Working directory: d:\chat bot dan 86
+Integrity mode: development
+
+## Problem & Context
+
+1. **Mở khóa toàn bộ tài khoản (Production Live)**:
+   - Giai đoạn thử nghiệm giới hạn Whitelist (chỉ rep Đức Trí) đã hoàn thành xuất sắc.
+   - Giờ cần mở khóa cho TOÀN BỘ khách hàng: Bất kỳ ai bình luận trên bài viết hoặc nhắn tin vào Messenger đều được Bot tiếp nhận và phản hồi tự động.
+
+2. **Chuẩn hóa nội dung phản hồi (Bỏ SĐT, chỉ để Website)**:
+   - Khách hàng yêu cầu: Bỏ hoàn toàn số điện thoại / Hotline / Zalo (0933 133 516) khỏi tất cả các mẫu câu trả lời.
+   - Chỉ giữ và điều hướng khách hàng truy cập website chính thức: `https://dan86.vn`.
+   - Áp dụng trên cả 4 nhóm mẫu tin trong `bot/bot_config.py`:
+     + `COMMENT_REPLIES` (Bình luận công khai lồng bên dưới)
+     + `PRIVATE_REPLIES_FROM_COMMENT` (Tin nhắn riêng tự động khi khách bình luận)
+     + `FIRST_INBOX_REPLIES` (Chào lần đầu khi khách nhắn tin vào Messenger)
+     + `WAIT_STAFF_REPLIES` (Nhắc chờ nhân viên khi khách nhắn lại sau 3 tiếng)
+
+3. **Đảm bảo cơ chế ngẫu nhiên (Randomization & Anti-Repeat)**:
+   - Đảm bảo hàm `pick_template` xoay vòng ngẫu nhiên trong danh sách các mẫu câu, không trùng lặp 2 câu giống nhau liên tiếp của cùng một nhóm.
+
+## Requirements
+
+### R1. Mở Khóa Tương Tác Cho Tất Cả Khách Hàng
+- Trong `bot/bot_config.py`: Đặt `TEST_ONLY_AUTHOR_WHITELIST: List[str] = []` (danh sách rỗng).
+- Rà soát các luồng trong `bot/page_bot_engine.py`:
+  - `process_post_comments_by_coordinates`: Xử lý bình luận của mọi khách hàng.
+  - `process_facebook_notifications_tab`: Tiếp nhận thông báo bình luận của mọi khách hàng.
+  - `process_facebook_comments_tab`: Quét thread bình luận của mọi khách hàng.
+  - `process_messenger_inbox_tab`: Tiếp nhận và phản hồi tin nhắn Messenger của mọi khách hàng.
+- Duy trì cooldown chống spam an toàn cho khách hàng (`CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS = 60.0`).
+
+### R2. Sửa Nội Dung Toàn Bộ Mẫu Tin Nhắn
+- Loại bỏ 100% số điện thoại `0933 133 516`, từ khóa `Hotline`, `Zalo`, `SĐT` trong tất cả các mẫu câu thuộc `bot/bot_config.py`.
+- Tích hợp và làm nổi bật link website `https://dan86.vn` một cách tự nhiên, lịch sự và chuyên nghiệp.
+
+### R3. Xác Minh Cơ Chế Chọn Mẫu Ngẫu Nhiên (Randomization)
+- Kiểm tra hàm `pick_template` với tham số `category_key` hoạt động chuẩn xác, chọn ngẫu nhiên các câu trả lời khác nhau qua các lượt.
+
+### R4. Cập Nhật Test Suite & Kiểm Chứng Hồi Quy
+- Cập nhật các test assertion trong `test_bot_logic.py` và `test_hardening_regression.py` để kiểm tra `https://dan86.vn` thay vì SĐT.
+- Chạy toàn bộ 100% unit tests: `python -m unittest discover -s . -p "test_*.py" -v` đạt PASS 100%.
+
+### R5. Đẩy Mã Nguồn Lên GitHub & Khởi Động Ca VPS 24/7 Mới
+- Commit và push mã nguồn sạch lên nhánh `master`.
+- Kích hoạt ca workflow mới trên GitHub Actions và kiểm tra trạng thái hoạt động.
+
+## Acceptance Criteria
+
+### Tính Chuẩn Xác & Vận Hành
+- [ ] `TEST_ONLY_AUTHOR_WHITELIST` được đặt là rỗng `[]`, mọi tài khoản comment hoặc inbox đều được bot phản hồi.
+- [ ] Không còn bất kỳ số điện thoại / Hotline / Zalo nào trong các template phản hồi; 100% hướng về `https://dan86.vn`.
+- [ ] Cơ chế `pick_template` chọn ngẫu nhiên mượt mà và không trùng lặp câu liền kề.
+- [ ] 100% Unit Tests PASS (không có bất kỳ fail hay error nào).
+- [ ] Code được commit & push lên `master`, ca VPS mới chạy ổn định trên GitHub Actions.
