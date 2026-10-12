@@ -389,8 +389,8 @@
     }
   },
   "stats": {
-    "comments_replied": 109,
-    "private_inboxes_from_comment": 36,
+    "comments_replied": 33,
+    "private_inboxes_from_comment": 18,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
