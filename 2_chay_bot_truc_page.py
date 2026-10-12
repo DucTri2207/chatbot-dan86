@@ -42,6 +42,7 @@ from bot.memory_store import BotMemoryStore
 from bot.page_bot_engine import (
     create_bot_browser_context,
     process_facebook_comments_tab,
+    process_facebook_notifications_tab,
     process_messenger_inbox_tab,
     verify_logged_in,
 )
@@ -196,18 +197,26 @@ async def run_bot_loop(
             while True:
                 cycle += 1
                 logger.info("--- Bắt đầu chu kỳ quét #%d ---", cycle)
+                notif_replied = 0
                 cmt_replied = 0
                 inbox_replied = 0
 
                 try:
-                    # 1. Quét Tab Bình luận Facebook (Rep cmt random + Tự động Inbox người cmt)
+                    # 1. Quét Trang Thông Báo Facebook (Toàn bộ bài viết, không giới hạn Top 10)
+                    notif_replied = await process_facebook_notifications_tab(
+                        page=page,
+                        memory=memory,
+                        dry_run=dry_run,
+                    )
+
+                    # 2. Quét Tab Bình luận Facebook (Fallback dự phòng Hộp thư)
                     cmt_replied = await process_facebook_comments_tab(
                         page=page,
                         memory=memory,
                         dry_run=dry_run,
                     )
 
-                    # 2. Quét Tab Messenger Inbox (Lần 1 chào random / Lần 2 báo đợi nhân viên random)
+                    # 3. Quét Tab Messenger Inbox (Lần 1 chào random / Lần 2 báo đợi nhân viên random)
                     inbox_replied = await process_messenger_inbox_tab(
                         page=page,
                         memory=memory,
@@ -220,9 +229,12 @@ async def run_bot_loop(
                     except Exception:
                         pass
 
+                total_replied = notif_replied + cmt_replied
                 logger.info(
-                    "Hoàn tất chu kỳ #%d: Đã xử lý %d bình luận & %d tin nhắn Inbox. Tổng thống kê: %s",
+                    "Hoàn tất chu kỳ #%d: Đã xử lý %d bình luận (%d từ Thông báo, %d từ Inbox) & %d tin nhắn Inbox. Tổng thống kê: %s",
                     cycle,
+                    total_replied,
+                    notif_replied,
                     cmt_replied,
                     inbox_replied,
                     memory.data.get("stats", {}),
@@ -239,7 +251,7 @@ async def run_bot_loop(
                 )
 
                 # Tự động đồng bộ Live Status & Memory lên GitHub VPS nếu có bình luận/tin nhắn mới hoặc định kỳ
-                if cmt_replied > 0 or inbox_replied > 0 or cycle % 3 == 0:
+                if total_replied > 0 or inbox_replied > 0 or cycle % 3 == 0:
                     sync_state_to_github_if_vps(logger, memory=memory)
 
                 if run_once:

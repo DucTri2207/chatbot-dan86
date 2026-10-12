@@ -31,6 +31,7 @@ from bot.bot_config import (
     MAX_THREADS_PER_CYCLE,
     META_INBOX_COMMENTS_URL,
     META_INBOX_MESSENGER_URL,
+    META_NOTIFICATIONS_URL,
     PAGE_NAMES,
     STORAGE_STATE_FILE,
     SYSTEM_BLACKLIST_STRINGS,
@@ -221,12 +222,241 @@ async def safe_click(
             return False
 
 
+async def get_element_coordinates(element: Any) -> Optional[Dict[str, float]]:
+    """
+    Trích xuất tọa độ DOM pixel thực tế {x, y, width, height, left, top, right, bottom}
+    từ getBoundingClientRect() của phần tử (tương đương F12 Console).
+    """
+    if element is None:
+        return None
+    try:
+        count_fn = getattr(element, "count", None)
+        if callable(count_fn):
+            cnt = await element.count()
+            if cnt == 0:
+                return None
+        vis_fn = getattr(element, "is_visible", None)
+        if callable(vis_fn):
+            if not await element.is_visible():
+                return None
+    except Exception:
+        pass
+
+    # 1. Thử evaluate getBoundingClientRect() trực tiếp trên DOM
+    try:
+        eval_fn = getattr(element, "evaluate", None)
+        if callable(eval_fn):
+            res = await element.evaluate("""el => {
+                try {
+                    const r = el.getBoundingClientRect();
+                    return {
+                        x: r.x !== undefined ? r.x : r.left,
+                        y: r.y !== undefined ? r.y : r.top,
+                        width: r.width,
+                        height: r.height,
+                        left: r.left,
+                        top: r.top,
+                        right: r.right,
+                        bottom: r.bottom
+                    };
+                } catch (_) {
+                    return null;
+                }
+            }""")
+            if isinstance(res, dict) and isinstance(res.get("width"), (int, float)) and isinstance(res.get("height"), (int, float)):
+                if res.get("width", 0) > 0 and res.get("height", 0) > 0:
+                    return {
+                        "x": float(res.get("x", 0.0)),
+                        "y": float(res.get("y", 0.0)),
+                        "width": float(res.get("width", 0.0)),
+                        "height": float(res.get("height", 0.0)),
+                        "left": float(res.get("left", res.get("x", 0.0))),
+                        "top": float(res.get("top", res.get("y", 0.0))),
+                        "right": float(res.get("right", res.get("x", 0.0) + res.get("width", 0.0))),
+                        "bottom": float(res.get("bottom", res.get("y", 0.0) + res.get("height", 0.0))),
+                    }
+    except Exception as e:
+        logger.debug("get_element_coordinates evaluate: %s", e)
+
+    # 2. Fallback sang element.bounding_box()
+    try:
+        bbox_fn = getattr(element, "bounding_box", None)
+        if callable(bbox_fn):
+            box = await element.bounding_box()
+            if isinstance(box, dict) and isinstance(box.get("width"), (int, float)) and isinstance(box.get("height"), (int, float)):
+                if box.get("width", 0) > 0 and box.get("height", 0) > 0:
+                    return {
+                        "x": float(box.get("x", 0.0)),
+                        "y": float(box.get("y", 0.0)),
+                        "width": float(box.get("width", 0.0)),
+                        "height": float(box.get("height", 0.0)),
+                        "left": float(box.get("x", 0.0)),
+                        "top": float(box.get("y", 0.0)),
+                        "right": float(box.get("x", 0.0) + box.get("width", 0.0)),
+                        "bottom": float(box.get("y", 0.0) + box.get("height", 0.0)),
+                    }
+    except Exception as e:
+        logger.debug("get_element_coordinates bounding_box: %s", e)
+
+    return None
+
+
+async def physical_mouse_click(page: Any, x: float, y: float) -> bool:
+    """Click chuột máy tính vật lý tại tọa độ pixel (x, y) bằng page.mouse.click."""
+    try:
+        mouse = getattr(page, "mouse", None)
+        if mouse is not None:
+            click_fn = getattr(mouse, "click", None)
+            if callable(click_fn):
+                res = click_fn(x, y)
+                if asyncio.iscoroutine(res) or hasattr(res, "__await__"):
+                    await res
+                return True
+    except Exception as e:
+        logger.debug("Lỗi physical_mouse_click tại (%s, %s): %s", x, y, e)
+    return False
+
+
+async def click_element_at_physical_coordinates(
+    page: Any,
+    element: Any,
+    timeout_ms: int = 2500,
+) -> bool:
+    """
+    Trích xuất tọa độ DOM vật lý qua getBoundingClientRect() và dùng chuột máy tính
+    click vật lý (page.mouse.click(center_x, center_y)).
+    """
+    try:
+        scroll_fn = getattr(element, "scroll_into_view_if_needed", None)
+        if callable(scroll_fn):
+            res_s = scroll_fn(timeout=1500)
+            if asyncio.iscoroutine(res_s) or hasattr(res_s, "__await__"):
+                await res_s
+    except Exception:
+        pass
+
+    coords = await get_element_coordinates(element)
+    if coords and coords.get("width", 0) > 0 and coords.get("height", 0) > 0:
+        cx = coords["x"] + coords["width"] / 2.0
+        cy = coords["y"] + coords["height"] / 2.0
+        clicked = await physical_mouse_click(page, cx, cy)
+        if clicked:
+            return True
+
+    return await safe_click(element, timeout=timeout_ms)
+
+
+def parse_notification_text(text: str) -> Dict[str, Any]:
+    """
+    Phân tích nội dung văn bản của một thông báo Facebook:
+    - author_name: Tên người bình luận (làm sạch qua clean_customer_name)
+    - time_str: Thời gian tương đối ('vừa xong', '1 phút', '2 giờ',...)
+    - comment_snippet: Trích đoạn nội dung bình luận (nếu có)
+    - is_comment_notif: Có phải thông báo bình luận/phản hồi không
+    - is_old: Bình luận cũ (> 3 ngày, tuần, tháng, năm)
+    """
+    if not text:
+        return {
+            "is_comment_notif": False,
+            "author_name": "bạn",
+            "time_str": "",
+            "comment_snippet": "",
+            "is_old": False,
+        }
+
+    clean_raw = " ".join(text.strip().split())
+    lower = clean_raw.lower()
+
+    # 1. Kiểm tra từ khóa thông báo bình luận / phản hồi
+    comment_keywords = [
+        "đã bình luận",
+        "commented",
+        "đã phản hồi",
+        "replied",
+        "bình luận về",
+        "phản hồi về",
+        "bình luận của",
+    ]
+    has_kw = any(kw in lower for kw in comment_keywords)
+    if not has_kw:
+        return {
+            "is_comment_notif": False,
+            "author_name": "bạn",
+            "time_str": "",
+            "comment_snippet": "",
+            "is_old": False,
+        }
+
+    # 2. Trích xuất tên tác giả
+    author_name = ""
+    match_author = re.search(
+        r"^(.+?)\s+(?:đã bình luận|commented|đã phản hồi|replied|bình luận về|phản hồi về)\b",
+        clean_raw,
+        re.IGNORECASE,
+    )
+    if match_author:
+        raw_author = match_author.group(1).strip()
+        raw_author = re.sub(r"^(?:thông báo mới|notification):\s*", "", raw_author, flags=re.IGNORECASE)
+        author_name = clean_customer_name(raw_author)
+    else:
+        author_name = "bạn"
+
+    # 3. Trích xuất snippet nội dung bình luận (nằm trong ngoặc kép hoặc sau dấu hai chấm)
+    snippet = ""
+    quote_match = re.search(r"['\"“](.+?)['\"”]", clean_raw)
+    if quote_match:
+        snippet = quote_match.group(1).strip()
+    else:
+        colon_match = re.search(
+            r":\s*([^·•\n]+?)(?:\s*[·•]|\s+\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y)|\s+vừa xong|$)",
+            clean_raw,
+            re.IGNORECASE,
+        )
+        if colon_match:
+            snippet = colon_match.group(1).strip()
+
+    snippet = clean_comment_text(snippet)
+
+    # 4. Trích xuất timestamp tương đối
+    time_str = ""
+    dot_match = re.search(r"[·•]\s*([^\n]+)$", clean_raw)
+    if dot_match:
+        cand_time = dot_match.group(1).strip()
+        if re.search(
+            r"\b(?:\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)|vừa xong|just now|vài giây)\b",
+            cand_time,
+            re.IGNORECASE,
+        ):
+            time_str = cand_time
+
+    if not time_str:
+        time_match = re.search(
+            r"\b(\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)(?:\s+(?:trước|ago))?|vừa xong|just now|vài giây)\b",
+            clean_raw,
+            re.IGNORECASE,
+        )
+        if time_match:
+            time_str = time_match.group(1).strip()
+
+    # 5. Kiểm tra thời gian cũ
+    is_old = is_old_comment_timestamp(time_str)
+
+    return {
+        "is_comment_notif": True,
+        "author_name": author_name or "bạn",
+        "time_str": time_str,
+        "comment_snippet": snippet,
+        "is_old": is_old,
+    }
+
+
 async def type_human_like(page: Page, locator: Locator, text: str) -> None:
     """
     Gõ văn bản vào ô chat giống người thật (hỗ trợ xuống dòng Shift+Enter
     để không bị gửi sớm khi mẫu câu có nhiều dòng).
+    Sử dụng click chuột vật lý vào tọa độ DOM trước khi gõ.
     """
-    await safe_click(locator, timeout=2500)
+    await click_element_at_physical_coordinates(page, locator, timeout_ms=2500)
     await human_sleep(0.4, 0.9)
 
     lines = text.split("\n")
@@ -1492,27 +1722,577 @@ async def locate_nested_reply_box(
     return None
 
 
+async def inspect_notifications_list(page: Page) -> List[Dict[str, Any]]:
+    """
+    Phân tích trang Thông báo Meta Business Suite:
+    - Tìm tất cả các mục thông báo liên quan đến bình luận.
+    - Đánh dấu data-dan86-notif-idx lên các phần tử để dễ dàng định vị.
+    - Trích xuất text và tọa độ DOM thực tế (getBoundingClientRect).
+    """
+    js_code = """
+    () => {
+        document.querySelectorAll('[data-dan86-notif-idx]').forEach(e => e.removeAttribute('data-dan86-notif-idx'));
+
+        const selectors = [
+            'div[role="listitem"]',
+            'div[role="row"]',
+            'div[role="article"]',
+            'div[role="button"]',
+            'a[role="link"]',
+            'div._a6ag._a6ah',
+            'div[data-pagelet*="Notification"]'
+        ];
+        const allCandidates = Array.from(document.querySelectorAll(selectors.join(', ')));
+
+        const results = [];
+        const seenTexts = new Set();
+
+        for (const el of allCandidates) {
+            const text = (el.innerText || '').trim();
+            if (!text || text.length < 10) continue;
+
+            const lower = text.toLowerCase();
+            const hasCommentKw = lower.includes('đã bình luận') ||
+                                 lower.includes('commented') ||
+                                 lower.includes('đã phản hồi') ||
+                                 lower.includes('replied') ||
+                                 lower.includes('bình luận về') ||
+                                 lower.includes('phản hồi về');
+            if (!hasCommentKw) continue;
+
+            const r = el.getBoundingClientRect();
+            if (r.width < 100 || r.height < 25) continue;
+
+            const keyText = text.slice(0, 120);
+            if (seenTexts.has(keyText)) continue;
+
+            const isChild = results.some(item => item.element && item.element.contains(el));
+            if (isChild) continue;
+
+            seenTexts.add(keyText);
+            const idx = results.length;
+            el.setAttribute('data-dan86-notif-idx', String(idx));
+
+            results.push({
+                index: idx,
+                element: el,
+                text: text,
+                coords: {
+                    x: r.x !== undefined ? r.x : r.left,
+                    y: r.y !== undefined ? r.y : r.top,
+                    width: r.width,
+                    height: r.height,
+                    left: r.left,
+                    top: r.top,
+                    right: r.right,
+                    bottom: r.bottom
+                }
+            });
+        }
+
+        return results.map(r => ({
+            index: r.index,
+            text: r.text,
+            coords: r.coords
+        }));
+    }
+    """
+    try:
+        raw_list = await page.evaluate(js_code)
+        if isinstance(raw_list, list):
+            return raw_list
+    except Exception as e:
+        logger.debug("Lỗi inspect_notifications_list: %s", e)
+    return []
+
+
+async def process_post_comments_by_coordinates(
+    page: Page,
+    memory: BotMemoryStore,
+    current_post_url: str = "",
+    dry_run: bool = False,
+    target_author_filter: Optional[str] = None,
+    max_comments: int = 10,
+) -> int:
+    """
+    Xử lý tất cả bình luận trên bài viết đang mở bằng Động cơ Tọa độ DOM F12 Vật lý:
+    1. Đổi bộ lọc sang 'Mới nhất' (ensure_newest_comments_filter).
+    2. Lặp mở rộng phản hồi ẩn (expand_all_comment_replies).
+    3. Phân tích panel bình luận (inspect_comment_panel).
+    4. Thả Like bình luận bằng click vật lý.
+    5. Click nút Trả lời bằng tọa độ chuột vật lý (page.mouse.click).
+    6. Chờ ô nested reply bung ra trong phạm vi hình học (box_y < comment_bottom + 250).
+    7. Click chuột vật lý vào ô nested reply -> gõ public_reply -> Enter.
+    8. Fail-safe guard: Nếu không tìm thấy ô nested reply, HỦY BỎ cmt công khai để chống văng ra ngoài bài viết.
+    9. Click nút 'Gửi tin nhắn' bằng tọa độ chuột vật lý để gửi Private Inbox.
+    10. Ghi nhận memory.
+    """
+    replied_count = 0
+    await ensure_newest_comments_filter(page)
+
+    post_comment_cycle = 0
+    while post_comment_cycle < max_comments:
+        post_comment_cycle += 1
+
+        await expand_all_comment_replies(page)
+
+        info = await inspect_comment_panel(page)
+        post_id = info.get("post_id") or ""
+        unreplied_candidates = info.get("unreplied_comments", [])
+
+        if not unreplied_candidates:
+            logger.debug("Bài viết này không còn bình luận nào cần trả lời.")
+            break
+
+        target_candidate = None
+        target_key = None
+        needs_inbox_only = False
+
+        for cand in unreplied_candidates:
+            cand_author = cand.get("author_name") or "bạn"
+            cand_text = cand.get("comment_text") or ""
+            cand_idx = int(cand.get("dom_index", 0))
+            cand_has_reply = bool(cand.get("has_page_reply", False))
+
+            if is_page_author_name(cand_author):
+                continue
+
+            # BỎ QUA 100% nếu bình luận cũ (tuần, tháng, năm hoặc > 3 ngày)
+            if cand.get("is_old_comment") or is_old_comment_timestamp(cand.get("time_str", "")):
+                logger.info(
+                    "Bình luận cũ từ [%s] (Thời gian: '%s'). BỎ QUA 100%!",
+                    cand_author,
+                    cand.get("time_str", "") or cand.get("innerPreview", "")[:30],
+                )
+                continue
+
+            # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
+            if TEST_ONLY_AUTHOR_WHITELIST:
+                c_norm = normalize_text(cand_author)
+                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                    logger.info(
+                        "Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).",
+                        cand_author,
+                    )
+                    continue
+
+            # Bổ sung cơ chế Cooldown chống Spam lặp cùng bình luận trên cùng bài viết
+            if memory.is_customer_in_cooldown(
+                cand_author,
+                cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
+                post_id=post_id,
+                comment_text=cand_text,
+            ):
+                logger.info(
+                    "Khách hàng [%s] vừa được phản hồi bình luận này trên bài [%s] (Cooldown %.0fs). Bỏ qua lặp!",
+                    cand_author,
+                    post_id,
+                    CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
+                )
+                continue
+
+            should_rep, comment_key = memory.should_reply_comment(
+                author_name=cand_author,
+                comment_text=cand_text,
+                has_page_reply_in_dom=cand_has_reply,
+                post_id=post_id,
+                dom_index=cand_idx,
+            )
+
+            if should_rep:
+                target_candidate = cand
+                target_key = comment_key
+                needs_inbox_only = False
+                break
+
+            # Nếu trong memory ĐÃ TỒN TẠI bản ghi nhưng chưa gửi inbox thành công:
+            if comment_key:
+                existing_rec = memory.get_comment_record(
+                    comment_key=comment_key,
+                    author_name=cand_author,
+                    comment_text=cand_text,
+                    post_id=post_id,
+                )
+                if existing_rec and not existing_rec.get("private_inbox_sent"):
+                    target_candidate = cand
+                    target_key = comment_key
+                    needs_inbox_only = True
+                    break
+
+        if target_candidate is None:
+            logger.debug("Tất cả bình luận chưa rep trên bài viết này đã được xử lý trong memory hoặc không hợp lệ.")
+            break
+
+        cand_author = clean_customer_name(target_candidate.get("author_name") or "bạn")
+        cand_text = clean_comment_text(target_candidate.get("comment_text") or "")
+        cand_idx = int(target_candidate.get("dom_index", 0))
+
+        public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(cand_author)
+        logger.info(
+            "Phát hiện bình luận mới từ [%s] (Post ID: %s, DOM Index: %d, Chỉ gửi Inbox: %s): %s",
+            cand_author,
+            post_id,
+            cand_idx,
+            needs_inbox_only,
+            cand_text[:80],
+        )
+
+        if dry_run:
+            if not needs_inbox_only:
+                logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
+            logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
+            replied_count += 1
+            break
+
+        # Đánh dấu article mục tiêu trên DOM
+        await tag_comment_target_in_dom(page, cand_idx)
+
+        # Xác định article bình luận mục tiêu
+        target_art: Optional[Locator] = None
+        marked_target = page.locator('[data-dan86-reply-target="true"]').first
+        if await marked_target.count() > 0 and await marked_target.is_visible():
+            target_art = marked_target
+        elif cand_idx >= 0:
+            all_arts = page.locator('[role="article"]')
+            if await all_arts.count() > cand_idx:
+                target_art = all_arts.nth(cand_idx)
+
+        if needs_inbox_only:
+            inbox_sent = await send_private_inbox_to_commenter(
+                page=page,
+                post_url=current_post_url or page.url,
+                author_name=cand_author,
+                private_reply_text=private_inbox_reply,
+                comment_text=cand_text,
+                dom_index=cand_idx,
+                dry_run=dry_run,
+            )
+            memory.mark_comment_replied(
+                comment_key=target_key,
+                author_name=cand_author,
+                comment_text=cand_text,
+                public_reply="(Đã phản hồi bình luận công khai)",
+                private_inbox_sent=inbox_sent,
+                private_reply_text=private_inbox_reply,
+                post_id=post_id,
+                dom_index=cand_idx,
+            )
+            replied_count += 1
+            if current_post_url and page.url != current_post_url:
+                try:
+                    await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
+                    await human_sleep(2.0, 3.5)
+                except Exception:
+                    pass
+            await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+            continue
+
+        # Bước 1: Thả Like bình luận của khách bằng click vật lý
+        if target_art is not None:
+            like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
+            if await like_btn.count() > 0 and await like_btn.is_visible():
+                try:
+                    await click_element_at_physical_coordinates(page, like_btn, timeout_ms=2000)
+                    await human_sleep(0.8, 1.5)
+                except Exception:
+                    pass
+
+        # Bước 2: Bấm chính xác nút "Trả lời" / "Phản hồi" (Reply) bằng TỌA ĐỘ VẬT LÝ F12
+        reply_clicked = False
+        marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
+        if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
+            try:
+                reply_clicked = await click_element_at_physical_coordinates(page, marked_reply_btn, timeout_ms=2500)
+            except Exception as e_reply:
+                logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
+
+        if not reply_clicked and target_art is not None:
+            cand_buttons = target_art.locator('div[role="button"], button, a, span')
+            b_count = min(await cand_buttons.count(), 20)
+            for b_idx in range(b_count):
+                b_el = cand_buttons.nth(b_idx)
+                if not await b_el.is_visible():
+                    continue
+                b_text = (await b_el.inner_text() or "").strip().lower()
+                b_aria = (await b_el.get_attribute("aria-label") or "").strip().lower()
+                b_combo = f"{b_text} {b_aria}"
+                if any(bad in b_combo for bad in ["xem", "ẩn", "view", "hide"]):
+                    continue
+                if (
+                    b_text in ["trả lời", "reply", "phản hồi"]
+                    or b_aria in ["trả lời", "reply", "phản hồi"]
+                    or b_aria.startswith("trả lời")
+                    or "trả lời bình luận" in b_aria
+                    or "reply to comment" in b_aria
+                ):
+                    try:
+                        reply_clicked = await click_element_at_physical_coordinates(page, b_el, timeout_ms=2500)
+                        if reply_clicked:
+                            logger.info("Đã bấm nút Trả lời trong comment article bằng tọa độ vật lý.")
+                            break
+                    except Exception as e_b:
+                        logger.debug("Lỗi bấm nút Trả lời dự phòng: %s", e_b)
+
+        # Chờ 1.2 - 2.0 giây để DOM chèn ô nhập phản hồi lồng nhau
+        if reply_clicked:
+            await human_sleep(1.2, 2.0)
+        else:
+            await human_sleep(0.8, 1.2)
+
+        # Định vị ô nhập phản hồi lồng nhau cấp 2 độc quyền cho target_art (ràng buộc box_y < comment_bottom + 250)
+        nested_box = await locate_nested_reply_box(page, target_art, timeout_seconds=2.5)
+
+        # Fail-safe guard: Nếu KHÔNG tìm thấy ô reply lồng nhau hợp lệ, HỦY BỎ cmt công khai
+        if nested_box is None:
+            logger.warning(
+                "Không tìm thấy ô nested reply lồng nhau hợp lệ gần bình luận của [%s], hủy cmt để chống đăng nhầm ra ngoài bài viết!",
+                cand_author,
+            )
+            inbox_sent = await send_private_inbox_to_commenter(
+                page=page,
+                post_url=current_post_url or page.url,
+                author_name=cand_author,
+                private_reply_text=private_inbox_reply,
+                comment_text=cand_text,
+                dom_index=cand_idx,
+                dry_run=dry_run,
+            )
+            memory.mark_comment_replied(
+                comment_key=target_key,
+                author_name=cand_author,
+                comment_text=cand_text,
+                public_reply="(Bỏ qua cmt công khai - Không tìm thấy ô lồng nhau)",
+                private_inbox_sent=inbox_sent,
+                private_reply_text=private_inbox_reply,
+                post_id=post_id,
+                dom_index=cand_idx,
+            )
+            replied_count += 1
+            if current_post_url and page.url != current_post_url:
+                try:
+                    await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
+                    await human_sleep(2.0, 3.5)
+                except Exception:
+                    pass
+            await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+            continue
+
+        # Whitelist re-check trước khi gửi cmt công khai
+        if TEST_ONLY_AUTHOR_WHITELIST:
+            c_norm = normalize_text(cand_author)
+            if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                logger.info(
+                    "Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).",
+                    cand_author,
+                )
+                continue
+
+        # Lấy tọa độ vật lý của nested_box và click chuột vật lý
+        box_coords = await get_element_coordinates(nested_box)
+        if box_coords:
+            bcx = box_coords["x"] + box_coords["width"] / 2.0
+            bcy = box_coords["y"] + box_coords["height"] / 2.0
+            await physical_mouse_click(page, bcx, bcy)
+            await human_sleep(0.3, 0.6)
+
+        await type_human_like(page, nested_box, public_reply)
+        await page.keyboard.press("Enter")
+        await human_sleep(2.5, 4.0)
+        logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: True, Coordinate Engine: True).", cand_author)
+
+        # Bước 3: Gửi tin nhắn riêng (Private Inbox) cho người vừa bình luận
+        inbox_sent = await send_private_inbox_to_commenter(
+            page=page,
+            post_url=current_post_url or page.url,
+            author_name=cand_author,
+            private_reply_text=private_inbox_reply,
+            comment_text=cand_text,
+            dom_index=cand_idx,
+            dry_run=dry_run,
+        )
+
+        memory.mark_comment_replied(
+            comment_key=target_key,
+            author_name=cand_author,
+            comment_text=cand_text,
+            public_reply=public_reply,
+            private_inbox_sent=inbox_sent,
+            private_reply_text=private_inbox_reply,
+            post_id=post_id,
+            dom_index=cand_idx,
+        )
+        replied_count += 1
+
+        if current_post_url and page.url != current_post_url:
+            try:
+                await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
+                await human_sleep(2.0, 3.5)
+            except Exception:
+                pass
+
+        await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+
+    return replied_count
+
+
+async def process_facebook_notifications_tab(
+    page: Page,
+    memory: BotMemoryStore,
+    dry_run: bool = False,
+) -> int:
+    """
+    Quét Trang Thông báo Fanpage (Facebook Notifications):
+    URL: https://business.facebook.com/latest/notifications?asset_id=104011958817512
+
+    Bao phủ TOÀN BỘ bài viết (không bị giới hạn bởi 10-20 bài gần nhất):
+    1. Lọc thông báo mới có từ khóa bình luận ('đã bình luận', 'commented', 'đã phản hồi', 'replied').
+    2. Trích xuất tên tác giả và thời gian tương đối ('vừa xong', '1 phút', 'vài giây').
+    3. Lọc bỏ thông báo cũ (> 3 ngày, tuần, tháng, năm).
+    4. Kiểm tra Whitelist (TEST_ONLY_AUTHOR_WHITELIST: Đức Trí).
+    5. Kiểm tra memory (chưa có trong replied_comments và không trong cooldown).
+    6. Click chuột vật lý vào thông báo để Facebook mở chi tiết bài viết và cuộn tới đúng comment.
+    7. Sử dụng Coordinate-based DOM Engine để phản hồi cmt lồng nhau và gửi tin nhắn riêng.
+    8. Quay lại trang thông báo để tiếp tục.
+    """
+    replied_count = 0
+    logger.info("Đang kiểm tra Trang Thông báo Facebook: %s", META_NOTIFICATIONS_URL)
+    try:
+        await page.goto(META_NOTIFICATIONS_URL, wait_until="domcontentloaded", timeout=45000)
+        await human_sleep(3.5, 5.0)
+    except Exception as e_nav:
+        logger.warning("Không thể điều hướng tới Trang Thông báo: %s", e_nav)
+        return 0
+
+    if not await verify_logged_in(page):
+        logger.warning("Phiên đăng nhập Facebook chưa sẵn sàng trên trang Thông báo!")
+        return 0
+
+    await dismiss_blocking_modals(page)
+
+    notifs = await inspect_notifications_list(page)
+    logger.info("Tìm thấy %d thông báo có chứa từ khóa bình luận trên trang Thông báo.", len(notifs))
+
+    for notif in notifs:
+        try:
+            notif_idx = notif.get("index", 0)
+            notif_text = notif.get("text", "")
+            parsed = parse_notification_text(notif_text)
+
+            if not parsed.get("is_comment_notif"):
+                continue
+
+            author = parsed.get("author_name", "bạn")
+            time_str = parsed.get("time_str", "")
+            snippet = parsed.get("comment_snippet", "")
+            is_old = parsed.get("is_old", False)
+
+            if is_old or is_old_comment_timestamp(time_str):
+                logger.info("Bỏ qua thông báo cũ từ [%s] (Thời gian: '%s').", author, time_str)
+                continue
+
+            # Whitelist filter
+            if TEST_ONLY_AUTHOR_WHITELIST:
+                c_norm = normalize_text(author)
+                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                    logger.info("Chế độ thử nghiệm an toàn: Bỏ qua thông báo từ [%s] (Chỉ tương tác với Đức Trí).", author)
+                    continue
+
+            # Memory cooldown check
+            if memory.is_customer_in_cooldown(
+                author,
+                cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
+                comment_text=snippet,
+            ):
+                logger.info("Khách hàng [%s] đang trong cooldown chống spam. Bỏ qua thông báo!", author)
+                continue
+
+            # Kiểm tra xem comment đã được xử lý hoàn tất chưa
+            rec = memory.get_comment_record(author_name=author, comment_text=snippet)
+            if rec and rec.get("public_reply") and rec.get("private_inbox_sent"):
+                p_rep = str(rec.get("public_reply", ""))
+                if not p_rep.startswith("(Bỏ qua"):
+                    logger.info("Bình luận từ thông báo của [%s] đã được trả lời & inbox trong memory. Bỏ qua!", author)
+                    continue
+
+            logger.info("Phát hiện thông báo bình luận MỚI từ [%s] ('%s' - %s). Đang nhấp mở chi tiết bài viết...", author, snippet[:40], time_str)
+
+            if dry_run:
+                pub_rep, priv_rep = memory.prepare_comment_and_inbox_replies(author)
+                logger.info("[DRY-RUN] Thông báo từ [%s] -> Sẽ rep cmt: %s", author, pub_rep)
+                logger.info("[DRY-RUN] Sẽ gửi tin nhắn riêng: %s", priv_rep[:80])
+                replied_count += 1
+                continue
+
+            # Click vật lý vào thông báo theo tọa độ DOM
+            clicked_notif = False
+            coords = notif.get("coords")
+            if coords and coords.get("width", 0) > 0 and coords.get("height", 0) > 0:
+                cx = coords["x"] + coords["width"] / 2.0
+                cy = coords["y"] + coords["height"] / 2.0
+                clicked_notif = await physical_mouse_click(page, cx, cy)
+
+            if not clicked_notif:
+                try:
+                    notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
+                    cnt = notif_loc.count()
+                    if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
+                        cnt = await cnt
+                    else:
+                        cnt = 1
+                    if cnt > 0:
+                        clicked_notif = await click_element_at_physical_coordinates(page, notif_loc, timeout_ms=3000)
+                except Exception as e_loc:
+                    logger.debug("Lỗi fallback click locator thông báo: %s", e_loc)
+
+            if not clicked_notif:
+                logger.warning("Không thể click vào thông báo của [%s].", author)
+                continue
+
+            # Chờ Facebook điều hướng tới bài viết và cuộn tới đúng comment
+            await human_sleep(4.0, 6.0)
+            await dismiss_blocking_modals(page)
+
+            # Xử lý bình luận bài viết vừa mở
+            post_url = page.url
+            rep_done = await process_post_comments_by_coordinates(
+                page=page,
+                memory=memory,
+                current_post_url=post_url,
+                dry_run=dry_run,
+                target_author_filter=author,
+                max_comments=5,
+            )
+            replied_count += rep_done
+
+            # Quay lại trang Thông báo để tiếp tục quét
+            if page.url != META_NOTIFICATIONS_URL:
+                try:
+                    await page.goto(META_NOTIFICATIONS_URL, wait_until="domcontentloaded", timeout=45000)
+                    await human_sleep(2.5, 4.0)
+                except Exception as e_back:
+                    logger.debug("Lỗi quay lại trang Thông báo: %s", e_back)
+
+            await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+
+        except Exception as e_notif:
+            logger.warning("Lỗi khi xử lý thông báo bình luận: %s", e_notif)
+
+    return replied_count
+
+
 async def process_facebook_comments_tab(
     page: Page,
     memory: BotMemoryStore,
     dry_run: bool = False,
 ) -> int:
     """
-    Quét tab Bình luận Facebook trên Meta Business Suite:
+    Quét tab Bình luận Facebook trên Meta Business Suite (Phương án Dự phòng / Fallback):
     1. Lọc sạch tên khách hàng (chống lấy nhầm 'Chỉ báo trạng thái online').
-    2. Chọn bài viết an toàn ở cột trái tại position x=150, y=40 (không bấm x=490, không đụng xóa/ẩn bài).
-    3. Tự động chuyển sắp xếp sang 'Mới nhất' (Newest) / 'Tất cả bình luận'.
-    4. Tự động mở rộng các phản hồi bị ẩn dưới nút 'Xem ... phản hồi'.
-    5. Chỉ xử lý bình luận MỚI (vừa xong, phút, giờ, hôm qua, 1-3 ngày), BỎ QUA 100% bình luận cũ (tuần, tháng, năm).
-    6. Thả Like bình luận.
-    7. Random câu trả lời công khai lồng dưới bình luận (Nested Reply).
-    8. Tự động gửi tin nhắn riêng (Inbox) cho người bình luận đó:
-       - Hỗ trợ Popup Modal
-       - Hỗ trợ giao diện See Chat (duyệt mọi textbox)
-       - Hỗ trợ Fallback tìm kiếm trong Messenger
+    2. Chọn bài viết an toàn ở cột trái tại position x=150, y=40.
+    3. Xử lý bình luận trên bài viết bằng Động cơ Tọa độ DOM F12 Vật lý.
     """
     replied_count = 0
-    logger.info("Đang kiểm tra Tab Bình luận Facebook: %s", META_INBOX_COMMENTS_URL)
+    logger.info("Đang kiểm tra Tab Bình luận Facebook (Fallback): %s", META_INBOX_COMMENTS_URL)
     await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
     await human_sleep(4.0, 6.0)
 
@@ -1520,7 +2300,6 @@ async def process_facebook_comments_tab(
         logger.warning("Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!")
         return 0
 
-    # Tìm danh sách các bài viết / bài đăng có bình luận ở cột bên trái
     thread_selectors = [
         'div._a6ag._a6ah',
         '[role="grid"] [role="row"]',
@@ -1551,7 +2330,6 @@ async def process_facebook_comments_tab(
                 continue
 
             preview_text = (await item.inner_text() or "").strip()
-            # Bấm vào dòng bài viết tại position x=150, y=40 để mở chi tiết bình luận, tuyệt đối không bấm x=490 (nút xóa/menu)
             try:
                 await safe_click(item, timeout=3000, position={"x": 150, "y": 40})
             except Exception:
@@ -1560,310 +2338,18 @@ async def process_facebook_comments_tab(
             await human_sleep(2.0, 3.5)
             current_post_url = page.url
 
-            # Đảm bảo bài viết hiển thị bình luận mới nhất
-            await ensure_newest_comments_filter(page)
-
-            # Lặp xử lý HẾT tất cả bình luận chưa trả lời trong bài viết đang mở
-            max_comments_per_post = 10
-            post_comment_cycle = 0
-
-            while post_comment_cycle < max_comments_per_post:
-                post_comment_cycle += 1
-
-                # Tự động mở rộng các phản hồi bị ẩn để kiểm tra chính xác 100%
-                await expand_all_comment_replies(page)
-
-                info = await inspect_comment_panel(page)
-                post_id = info.get("post_id") or ""
-                unreplied_candidates = info.get("unreplied_comments", [])
-
-                # Nếu bài viết này không còn bình luận nào chưa trả lời -> Chuyển sang bài viết tiếp theo
-                if not unreplied_candidates:
-                    logger.debug("Bài viết này không còn bình luận nào cần trả lời.")
-                    break
-
-                # Tìm candidate đầu tiên cần trả lời hoặc cần gửi tin nhắn riêng theo bộ nhớ (memory)
-                target_candidate = None
-                target_key = None
-                needs_inbox_only = False
-                for cand in unreplied_candidates:
-                    cand_author = cand.get("author_name") or "bạn"
-                    cand_text = cand.get("comment_text") or preview_text
-                    cand_idx = int(cand.get("dom_index", 0))
-                    cand_has_reply = bool(cand.get("has_page_reply", False))
-
-                    if is_page_author_name(cand_author):
-                        continue
-
-                    # BỎ QUA 100% nếu bình luận cũ (tuần, tháng, năm hoặc > 3 ngày)
-                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand.get("time_str", "")):
-                        logger.info("Bình luận cũ từ [%s] (Thời gian: '%s'). BỎ QUA 100%!", cand_author, cand.get("time_str", "") or cand.get("innerPreview", "")[:30])
-                        continue
-
-                    # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
-                    # Người dùng chỉ đạo: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
-                    if TEST_ONLY_AUTHOR_WHITELIST:
-                        c_norm = normalize_text(cand_author)
-                        if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
-                            logger.info("Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", cand_author)
-                            continue
-
-                    # Bổ sung cơ chế Cooldown chống Spam lặp cùng bình luận trên cùng bài viết
-                    if memory.is_customer_in_cooldown(
-                        cand_author,
-                        cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
-                        post_id=post_id,
-                        comment_text=cand_text,
-                    ):
-                        logger.info(
-                            "Khách hàng [%s] vừa được phản hồi bình luận này trên bài [%s] (Cooldown %.0fs). Bỏ qua lặp!",
-                            cand_author,
-                            post_id,
-                            CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
-                        )
-                        continue
-
-                    should_rep, comment_key = memory.should_reply_comment(
-                        author_name=cand_author,
-                        comment_text=cand_text,
-                        has_page_reply_in_dom=cand_has_reply,
-                        post_id=post_id,
-                        dom_index=cand_idx,
-                    )
-
-                    # BẮT BUỘC kiểm tra if should_rep: trước khi gán target_candidate = cand
-                    if should_rep:
-                        target_candidate = cand
-                        target_key = comment_key
-                        needs_inbox_only = False
-                        break
-
-                    # Nếu trong memory ĐÃ TỒN TẠI bản ghi (đã rep công khai rồi) nhưng chưa gửi inbox thành công:
-                    if comment_key:
-                        existing_rec = memory.get_comment_record(
-                            comment_key=comment_key,
-                            author_name=cand_author,
-                            comment_text=cand_text,
-                            post_id=post_id,
-                        )
-                        if existing_rec and not existing_rec.get("private_inbox_sent"):
-                            target_candidate = cand
-                            target_key = comment_key
-                            needs_inbox_only = True
-                            break
-
-                # Nếu tất cả các candidate đều đã được xử lý trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
-                if target_candidate is None:
-                    logger.debug("Tất cả bình luận chưa rep trên bài viết này đã được xử lý trong memory hoặc không hợp lệ.")
-                    break
-
-                cand_author = clean_customer_name(target_candidate.get("author_name") or "bạn")
-                cand_text = clean_comment_text(target_candidate.get("comment_text") or preview_text)
-                cand_idx = int(target_candidate.get("dom_index", 0))
-
-                public_reply, private_inbox_reply = memory.prepare_comment_and_inbox_replies(cand_author)
-                logger.info(
-                    "Phát hiện bình luận mới từ [%s] (Post ID: %s, DOM Index: %d, Chỉ gửi Inbox: %s): %s",
-                    cand_author,
-                    post_id,
-                    cand_idx,
-                    needs_inbox_only,
-                    cand_text[:80],
-                )
-
-                if dry_run:
-                    if not needs_inbox_only:
-                        logger.info("[DRY-RUN] Sẽ rep cmt công khai lồng bên dưới: %s", public_reply)
-                    logger.info("[DRY-RUN] Sẽ tự động inbox riêng: %s", private_inbox_reply[:90])
-                    replied_count += 1
-                    break
-
-                # Đánh dấu article mục tiêu trên DOM
-                await tag_comment_target_in_dom(page, cand_idx)
-
-                # Xác định article bình luận mục tiêu
-                target_art: Optional[Locator] = None
-                marked_target = page.locator('[data-dan86-reply-target="true"]').first
-                if await marked_target.count() > 0 and await marked_target.is_visible():
-                    target_art = marked_target
-                elif cand_idx >= 0:
-                    all_arts = page.locator('[role="article"]')
-                    if await all_arts.count() > cand_idx:
-                        target_art = all_arts.nth(cand_idx)
-
-                if needs_inbox_only:
-                    # Bình luận đã có câu trả lời công khai bên dưới -> Chỉ gửi trực tiếp 1 tin nhắn riêng (Inbox)
-                    inbox_sent = await send_private_inbox_to_commenter(
-                        page=page,
-                        post_url=current_post_url,
-                        author_name=cand_author,
-                        private_reply_text=private_inbox_reply,
-                        comment_text=cand_text,
-                        dom_index=cand_idx,
-                        dry_run=dry_run,
-                    )
-                    memory.mark_comment_replied(
-                        comment_key=target_key,
-                        author_name=cand_author,
-                        comment_text=cand_text,
-                        public_reply="(Đã phản hồi bình luận công khai)",
-                        private_inbox_sent=inbox_sent,
-                        private_reply_text=private_inbox_reply,
-                        post_id=post_id,
-                        dom_index=cand_idx,
-                    )
-                    replied_count += 1
-                    if page.url != current_post_url:
-                        try:
-                            await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
-                            await human_sleep(2.0, 3.5)
-                        except Exception:
-                            pass
-                    await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
-                    continue
-
-                # Bước 1: Thả Like bình luận của khách
-                if target_art is not None:
-                    like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
-                    if await like_btn.count() > 0 and await like_btn.is_visible():
-                        try:
-                            await safe_click(like_btn, timeout=2000)
-                            await human_sleep(0.8, 1.5)
-                        except Exception:
-                            pass
-
-                # Bước 2: Bấm chính xác nút "Trả lời" / "Phản hồi" (Reply) của bình luận khách
-                reply_clicked = False
-                marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
-                if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
-                    try:
-                        reply_clicked = await safe_click(marked_reply_btn, timeout=2500)
-                    except Exception as e_reply:
-                        logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
-
-                if not reply_clicked and target_art is not None:
-                    # Tìm chính xác nút 'Trả lời' / 'Reply' / 'Phản hồi' nằm BÊN TRONG comment article của khách
-                    cand_buttons = target_art.locator('div[role="button"], button, a, span')
-                    b_count = min(await cand_buttons.count(), 20)
-                    for b_idx in range(b_count):
-                        b_el = cand_buttons.nth(b_idx)
-                        if not await b_el.is_visible():
-                            continue
-                        b_text = (await b_el.inner_text() or "").strip().lower()
-                        b_aria = (await b_el.get_attribute("aria-label") or "").strip().lower()
-                        b_combo = f"{b_text} {b_aria}"
-                        if any(bad in b_combo for bad in ["xem", "ẩn", "view", "hide"]):
-                            continue
-                        if (
-                            b_text in ["trả lời", "reply", "phản hồi"]
-                            or b_aria in ["trả lời", "reply", "phản hồi"]
-                            or b_aria.startswith("trả lời")
-                            or "trả lời bình luận" in b_aria
-                            or "reply to comment" in b_aria
-                        ):
-                            try:
-                                reply_clicked = await safe_click(b_el, timeout=2500)
-                                if reply_clicked:
-                                    logger.info("Đã bấm nút Trả lời trong comment article.")
-                                    break
-                            except Exception as e_b:
-                                logger.debug("Lỗi bấm nút Trả lời dự phòng: %s", e_b)
-
-                # Chờ 1.0 - 2.0 giây để DOM chèn ô nhập phản hồi lồng nhau
-                if reply_clicked:
-                    await human_sleep(1.2, 2.0)
-                else:
-                    await human_sleep(0.8, 1.2)
-
-                # Định vị ô nhập phản hồi lồng nhau cấp 2 độc quyền cho target_art
-                nested_box = await locate_nested_reply_box(page, target_art, timeout_seconds=2.5)
-
-                # Cơ chế Bảo vệ Chống Đăng Nhầm Ra Ngoài (Fail-safe Guard):
-                # Nếu KHÔNG tìm thấy ô reply lồng nhau hợp lệ nằm sát bên dưới target_art, TUYỆT ĐỐI KHÔNG GÕ VÀO Ô BÌNH LUẬN BÀI VIẾT!
-                if nested_box is None:
-                    logger.warning(
-                        "Không tìm thấy ô nested reply lồng nhau hợp lệ gần bình luận của [%s], hủy cmt để chống đăng nhầm ra ngoài bài viết!",
-                        cand_author,
-                    )
-                    # Hủy bỏ bước rep công khai, chỉ gửi tin nhắn riêng Messenger
-                    inbox_sent = await send_private_inbox_to_commenter(
-                        page=page,
-                        post_url=current_post_url,
-                        author_name=cand_author,
-                        private_reply_text=private_inbox_reply,
-                        comment_text=cand_text,
-                        dom_index=cand_idx,
-                        dry_run=dry_run,
-                    )
-
-                    memory.mark_comment_replied(
-                        comment_key=target_key,
-                        author_name=cand_author,
-                        comment_text=cand_text,
-                        public_reply="(Bỏ qua cmt công khai - Không tìm thấy ô lồng nhau)",
-                        private_inbox_sent=inbox_sent,
-                        private_reply_text=private_inbox_reply,
-                        post_id=post_id,
-                        dom_index=cand_idx,
-                    )
-                    replied_count += 1
-                    if page.url != current_post_url:
-                        try:
-                            await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
-                            await human_sleep(2.0, 3.5)
-                        except Exception:
-                            pass
-                    await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
-                    continue
-
-                # Nếu tìm thấy ô nested reply lồng nhau hợp lệ:
-                if TEST_ONLY_AUTHOR_WHITELIST:
-                    c_norm = normalize_text(cand_author)
-                    if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
-                        logger.info("Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).", cand_author)
-                        continue
-
-                await type_human_like(page, nested_box, public_reply)
-                await page.keyboard.press("Enter")
-                await human_sleep(2.5, 4.0)
-                logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: True).", cand_author)
-
-                # Bước 3: Tự động gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
-                inbox_sent = await send_private_inbox_to_commenter(
-                    page=page,
-                    post_url=current_post_url,
-                    author_name=cand_author,
-                    private_reply_text=private_inbox_reply,
-                    comment_text=cand_text,
-                    dom_index=cand_idx,
-                    dry_run=dry_run,
-                )
-
-                # Lưu vào bộ nhớ với khóa định danh kết hợp post_id + dom_index
-                memory.mark_comment_replied(
-                    comment_key=target_key,
-                    author_name=cand_author,
-                    comment_text=cand_text,
-                    public_reply=public_reply,
-                    private_inbox_sent=inbox_sent,
-                    private_reply_text=private_inbox_reply,
-                    post_id=post_id,
-                    dom_index=cand_idx,
-                )
-                replied_count += 1
-
-                # Đảm bảo trở lại đúng bài viết đang mở nếu URL bị đổi
-                if page.url != current_post_url:
-                    try:
-                        await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
-                        await human_sleep(2.0, 3.5)
-                    except Exception:
-                        pass
-
-                await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
+            # Xử lý tất cả bình luận trên bài viết này bằng Động cơ Tọa độ DOM F12
+            p_replied = await process_post_comments_by_coordinates(
+                page=page,
+                memory=memory,
+                current_post_url=current_post_url,
+                dry_run=dry_run,
+                max_comments=10,
+            )
+            replied_count += p_replied
 
         except Exception as e:
-            logger.warning("Lỗi khi xử lý bình luận thứ %d: %s", i, e)
+            logger.warning("Lỗi khi xử lý bài viết thứ %d: %s", i, e)
 
     return replied_count
 

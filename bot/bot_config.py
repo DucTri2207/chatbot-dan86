@@ -40,6 +40,10 @@ META_INBOX_COMMENTS_URL = os.environ.get(
     "META_COMMENTS_URL",
     "https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
 )
+META_NOTIFICATIONS_URL = os.environ.get(
+    "META_NOTIFICATIONS_URL",
+    "https://business.facebook.com/latest/notifications?asset_id=104011958817512",
+)
 
 # Tên nhận diện Fanpage của mình (kiểm tra xem tin nhắn/bình luận cuối có phải của shop không)
 PAGE_NAMES = [
