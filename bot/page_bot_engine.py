@@ -534,35 +534,36 @@ async def verify_logged_in(page: Page) -> bool:
     parsed = urllib.parse.urlparse(page.url)
     path = parsed.path.lower()
 
-    # 1. Kiểm tra nhanh giao diện Hộp thư / Bình luận MBS (Inbox indicators)
-    # Nếu các phần tử chính của Meta Business Suite đã hiện diện, kết luận đã đăng nhập thành công ngay lập tức!
+    # 1. Kiểm tra nghiêm ngặt xem trang có đang ở màn hình đăng nhập / mật khẩu không
+    is_at_loginpage = "/business/loginpage" in path or path.startswith("/login") or path == "/login" or "checkpoint" in path
+    has_login_form = False
+    try:
+        has_login_form = await page.locator('input[name="email"], input[name="pass"], input[type="password"]').count() > 0
+    except Exception:
+        pass
+
     inbox_indicators = [
-        '[role="navigation"]',
         '[data-pagelet*="ThreadList"]',
         'div._a6ag._a6ah',
         'div[role="presentation"].x1ypdohk',
         'div:has-text("Bình luận trên Facebook")',
         'div:has-text("Tất cả tin nhắn")',
         'div:has-text("Hộp thư")',
+        '[data-dan86-notif-idx]',
     ]
-    for ind in inbox_indicators:
-        try:
-            loc = page.locator(ind).first
-            if await loc.count() > 0 and await loc.is_visible():
-                return True
-        except Exception:
-            pass
 
-    # 2. Nếu trang chứa form nhập tài khoản / mật khẩu thông thường trên trang chính
-    try:
-        login_form = await page.locator('input[name="email"], input[name="pass"]').count()
-        if login_form > 0:
-            return False
-    except Exception:
-        pass
-
-    # 3. Kiểm tra xem có đang ở trang login thực sự không (dựa trên đường dẫn path)
-    is_at_loginpage = "/business/loginpage" in path or path.startswith("/login") or path == "/login"
+    # Nếu KHÔNG ở màn hình đăng nhập, kiểm tra nhanh giao diện Hộp thư / Thông báo MBS
+    if not is_at_loginpage and not has_login_form:
+        for ind in inbox_indicators:
+            try:
+                loc = page.locator(ind).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    return True
+            except Exception:
+                pass
+    elif has_login_form and not is_at_loginpage:
+        # Trang thường chứa form login -> Chưa đăng nhập
+        return False
 
     if is_at_loginpage:
         logger.info("Phát hiện màn hình chuyển tiếp Meta Business (%s). Đang kiểm tra nút đăng nhập một chạm...", page.url[:80])
@@ -2338,7 +2339,12 @@ async def process_facebook_notifications_tab(
         return 0
 
     if not await verify_logged_in(page):
-        logger.warning("Phiên đăng nhập Facebook chưa sẵn sàng trên trang Thông báo!")
+        logger.warning("Phiên đăng nhập Facebook chưa sẵn sàng trên trang Thông báo! Đang hồi phục về trang Hộp thư...")
+        try:
+            await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
+            await human_sleep(2.0, 3.5)
+        except Exception:
+            pass
         return 0
 
     await dismiss_blocking_modals(page)
