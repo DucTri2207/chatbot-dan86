@@ -373,9 +373,18 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
         "commented",
         "đã phản hồi",
         "replied",
+        "đã trả lời",
         "bình luận về",
         "phản hồi về",
         "bình luận của",
+        "trả lời bình luận",
+        "trả lời một bình luận",
+        "đã nhắc đến bạn trong một bình luận",
+        "đã nhắc đến trang của bạn trong một bình luận",
+        "đã nhắc đến bạn",
+        "nhắc đến bạn trong một bình luận",
+        "mentioned you in a comment",
+        "mentioned your page in a comment",
     ]
     has_kw = any(kw in lower for kw in comment_keywords)
     if not has_kw:
@@ -390,7 +399,7 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
     # 2. Trích xuất tên tác giả
     author_name = ""
     match_author = re.search(
-        r"^(.+?)\s+(?:đã bình luận|commented|đã phản hồi|replied|bình luận về|phản hồi về)\b",
+        r"^(.+?)\s+(?:đã bình luận|commented|đã phản hồi|replied|đã trả lời|bình luận về|phản hồi về|trả lời bình luận|đã nhắc đến|nhắc đến|mentioned)\b",
         clean_raw,
         re.IGNORECASE,
     )
@@ -399,7 +408,16 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
         raw_author = re.sub(r"^(?:thông báo mới|notification):\s*", "", raw_author, flags=re.IGNORECASE)
         author_name = clean_customer_name(raw_author)
     else:
-        author_name = "bạn"
+        # Fallback tìm dạng 'bình luận từ/by/của X'
+        match_author_alt = re.search(
+            r"(?:từ|by|của)\s+([^\n:·•]+?)(?::|\s+[·•]|\s+\d+\s*(?:giây|phút|giờ|ngày|tuần)|$)",
+            clean_raw,
+            re.IGNORECASE,
+        )
+        if match_author_alt:
+            author_name = clean_customer_name(match_author_alt.group(1).strip())
+        else:
+            author_name = "bạn"
 
     # 3. Trích xuất snippet nội dung bình luận (nằm trong ngoặc kép hoặc sau dấu hai chấm)
     snippet = ""
@@ -913,12 +931,15 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             return blacklist.some(b => low.includes(b)) || pageNames.some(p => low.startsWith(p));
         };
 
-        // Tìm tất cả articles trong vùng hiển thị chi tiết bài viết (x > 300)
-        const allArticles = Array.from(document.querySelectorAll('[role="article"]'))
+        // Tìm tất cả articles trong vùng hiển thị chi tiết bài viết (ưu tiên x > 300 nếu là 3 cột, hoặc toàn bộ nếu mở đơn bài)
+        let allArticles = Array.from(document.querySelectorAll('[role="article"]'))
             .filter(el => {
                 const r = el.getBoundingClientRect();
-                return r.left > 300 && r.height > 15;
+                return r.height > 15;
             });
+        if (allArticles.some(el => el.getBoundingClientRect().left > 300)) {
+            allArticles = allArticles.filter(el => el.getBoundingClientRect().left > 300);
+        }
 
         // Lọc bỏ article chứa nhãn online indicator
         const commentArticles = allArticles.filter(art => {
@@ -1212,11 +1233,14 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
     """
     js_tag = """
     (idx) => {
-        const allArticles = Array.from(document.querySelectorAll('[role="article"]'))
+        let allArticles = Array.from(document.querySelectorAll('[role="article"]'))
             .filter(el => {
                 const r = el.getBoundingClientRect();
-                return r.left > 300 && r.height > 15;
+                return r.height > 15;
             });
+        if (allArticles.some(el => el.getBoundingClientRect().left > 300)) {
+            allArticles = allArticles.filter(el => el.getBoundingClientRect().left > 300);
+        }
 
         document.querySelectorAll('[data-dan86-reply-target]').forEach(e => e.removeAttribute('data-dan86-reply-target'));
         document.querySelectorAll('[data-dan86-reply-btn]').forEach(e => e.removeAttribute('data-dan86-reply-btn'));
@@ -1423,13 +1447,15 @@ async def send_private_inbox_to_commenter(
     clicked_btn = False
     btn_text_lower = ""
 
-    # 1. Thử click nút tin nhắn đã được gán data-dan86-msg-btn
+    # 1. Thử click nút tin nhắn đã được gán data-dan86-msg-btn bằng tọa độ vật lý
     marked_msg_btn = page.locator('[data-dan86-msg-btn="true"]').first
     if await marked_msg_btn.count() > 0 and await marked_msg_btn.is_visible():
         try:
             btn_text_lower = (await marked_msg_btn.inner_text() or "").lower()
-            await safe_click(marked_msg_btn, timeout=2500)
-            clicked_btn = True
+            clicked_btn = await click_element_at_physical_coordinates(page, marked_msg_btn, timeout_ms=2500)
+            if not clicked_btn:
+                await safe_click(marked_msg_btn, timeout=2500)
+                clicked_btn = True
             await human_sleep(2.0, 3.5)
         except Exception as e_mbtn:
             logger.debug("Lỗi bấm nút tin nhắn đánh dấu: %s", e_mbtn)
@@ -1439,11 +1465,14 @@ async def send_private_inbox_to_commenter(
         js_click_msg = """
         (args) => {
             const { targetIdx, targetAuthor } = args;
-            const articles = Array.from(document.querySelectorAll('[role="article"]'))
+            let articles = Array.from(document.querySelectorAll('[role="article"]'))
                 .filter(el => {
                     const r = el.getBoundingClientRect();
-                    return r.left > 300 && r.height > 15;
+                    return r.height > 15;
                 });
+            if (articles.some(el => el.getBoundingClientRect().left > 300)) {
+                articles = articles.filter(el => el.getBoundingClientRect().left > 300);
+            }
 
             let target = null;
             if (targetIdx >= 0 && targetIdx < articles.length) {
@@ -1514,7 +1543,9 @@ async def send_private_inbox_to_commenter(
                         'button:has-text("Gửi"), button:has-text("Send")'
                     ).last
                     if await send_btn.count() > 0 and await send_btn.is_visible():
-                        await safe_click(send_btn, timeout=2500)
+                        clicked_send = await click_element_at_physical_coordinates(page, send_btn, timeout_ms=2500)
+                        if not clicked_send:
+                            await safe_click(send_btn, timeout=2500)
                     else:
                         await page.keyboard.press("Enter")
                     await human_sleep(2.0, 3.5)
@@ -1739,8 +1770,7 @@ async def inspect_notifications_list(page: Page) -> List[Dict[str, Any]]:
             'div[role="article"]',
             'div[role="button"]',
             'a[role="link"]',
-            'div._a6ag._a6ah',
-            'div[data-pagelet*="Notification"]'
+            'div._a6ag._a6ah'
         ];
         const allCandidates = Array.from(document.querySelectorAll(selectors.join(', ')));
 
@@ -1756,18 +1786,24 @@ async def inspect_notifications_list(page: Page) -> List[Dict[str, Any]]:
                                  lower.includes('commented') ||
                                  lower.includes('đã phản hồi') ||
                                  lower.includes('replied') ||
+                                 lower.includes('đã trả lời') ||
                                  lower.includes('bình luận về') ||
-                                 lower.includes('phản hồi về');
+                                 lower.includes('phản hồi về') ||
+                                 lower.includes('bình luận của') ||
+                                 lower.includes('đã nhắc đến') ||
+                                 lower.includes('mentioned');
             if (!hasCommentKw) continue;
 
             const r = el.getBoundingClientRect();
-            if (r.width < 100 || r.height < 25) continue;
+            // Thẻ thông báo độc lập có kích thước pixel rõ ràng, tránh bắt nhầm toàn bộ container/feed
+            if (r.width < 100 || r.height < 25 || r.height > 250) continue;
+
+            // Bỏ qua nếu phần tử này là container bao bọc một candidate thẻ con khác
+            const containsOtherCard = allCandidates.some(c => c !== el && el.contains(c) && (c.innerText || '').trim().length >= 10);
+            if (containsOtherCard) continue;
 
             const keyText = text.slice(0, 120);
             if (seenTexts.has(keyText)) continue;
-
-            const isChild = results.some(item => item.element && item.element.contains(el));
-            if (isChild) continue;
 
             seenTexts.add(keyText);
             const idx = results.length;
@@ -1873,6 +1909,25 @@ async def process_post_comments_by_coordinates(
                     logger.info(
                         "Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).",
                         cand_author,
+                    )
+                    continue
+
+            # Lọc chính xác theo tác giả mục tiêu từ thông báo nếu có chỉ định
+            if target_author_filter and target_author_filter != "bạn":
+                t_norm = normalize_text(target_author_filter)
+                c_norm = normalize_text(cand_author)
+                t_words = set(t_norm.split())
+                c_words = set(c_norm.split())
+                is_target_match = (
+                    t_norm in c_norm
+                    or c_norm in t_norm
+                    or (bool(t_words) and bool(c_words) and t_words == c_words)
+                )
+                if not is_target_match:
+                    logger.debug(
+                        "Bỏ qua bình luận từ [%s] vì không khớp tác giả thông báo mục tiêu [%s].",
+                        cand_author,
+                        target_author_filter,
                     )
                     continue
 
@@ -1989,22 +2044,36 @@ async def process_post_comments_by_coordinates(
 
         # Bước 1: Thả Like bình luận của khách bằng click vật lý
         if target_art is not None:
-            like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
-            if await like_btn.count() > 0 and await like_btn.is_visible():
-                try:
-                    await click_element_at_physical_coordinates(page, like_btn, timeout_ms=2000)
-                    await human_sleep(0.8, 1.5)
-                except Exception:
-                    pass
+            try:
+                like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
+                cnt = like_btn.count()
+                if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
+                    cnt = await cnt
+                if cnt > 0:
+                    vis = like_btn.is_visible()
+                    if asyncio.iscoroutine(vis) or hasattr(vis, "__await__"):
+                        vis = await vis
+                    if vis:
+                        await click_element_at_physical_coordinates(page, like_btn, timeout_ms=2000)
+                        await human_sleep(0.8, 1.5)
+            except Exception:
+                pass
 
         # Bước 2: Bấm chính xác nút "Trả lời" / "Phản hồi" (Reply) bằng TỌA ĐỘ VẬT LÝ F12
         reply_clicked = False
-        marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
-        if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
-            try:
-                reply_clicked = await click_element_at_physical_coordinates(page, marked_reply_btn, timeout_ms=2500)
-            except Exception as e_reply:
-                logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
+        try:
+            marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
+            rcnt = marked_reply_btn.count()
+            if asyncio.iscoroutine(rcnt) or hasattr(rcnt, "__await__"):
+                rcnt = await rcnt
+            if rcnt > 0:
+                rvis = marked_reply_btn.is_visible()
+                if asyncio.iscoroutine(rvis) or hasattr(rvis, "__await__"):
+                    rvis = await rvis
+                if rvis:
+                    reply_clicked = await click_element_at_physical_coordinates(page, marked_reply_btn, timeout_ms=2500)
+        except Exception as e_reply:
+            logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
 
         if not reply_clicked and target_art is not None:
             cand_buttons = target_art.locator('div[role="button"], button, a, span')
@@ -2225,24 +2294,24 @@ async def process_facebook_notifications_tab(
 
             # Click vật lý vào thông báo theo tọa độ DOM
             clicked_notif = False
-            coords = notif.get("coords")
-            if coords and coords.get("width", 0) > 0 and coords.get("height", 0) > 0:
-                cx = coords["x"] + coords["width"] / 2.0
-                cy = coords["y"] + coords["height"] / 2.0
-                clicked_notif = await physical_mouse_click(page, cx, cy)
+            # Ưu tiên 1: Cuộn tới phần tử và click vật lý vào tọa độ DOM thực tế hiện tại
+            try:
+                notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
+                cnt = notif_loc.count()
+                if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
+                    cnt = await cnt
+                if cnt > 0:
+                    clicked_notif = await click_element_at_physical_coordinates(page, notif_loc, timeout_ms=3000)
+            except Exception as e_loc:
+                logger.debug("Lỗi click locator thông báo bằng tọa độ vật lý: %s", e_loc)
 
+            # Ưu tiên 2: Fallback click trực tiếp vào tọa độ đã trích xuất trước đó
             if not clicked_notif:
-                try:
-                    notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
-                    cnt = notif_loc.count()
-                    if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
-                        cnt = await cnt
-                    else:
-                        cnt = 1
-                    if cnt > 0:
-                        clicked_notif = await click_element_at_physical_coordinates(page, notif_loc, timeout_ms=3000)
-                except Exception as e_loc:
-                    logger.debug("Lỗi fallback click locator thông báo: %s", e_loc)
+                coords = notif.get("coords")
+                if coords and coords.get("width", 0) > 0 and coords.get("height", 0) > 0:
+                    cx = coords["x"] + coords["width"] / 2.0
+                    cy = coords["y"] + coords["height"] / 2.0
+                    clicked_notif = await physical_mouse_click(page, cx, cy)
 
             if not clicked_notif:
                 logger.warning("Không thể click vào thông báo của [%s].", author)
@@ -2252,10 +2321,24 @@ async def process_facebook_notifications_tab(
             await human_sleep(4.0, 6.0)
             await dismiss_blocking_modals(page)
 
+            # Kiểm tra xem Facebook có mở tab/cửa sổ mới hay không (target="_blank")
+            context = getattr(page, "context", None)
+            target_page = page
+            opened_new_page = False
+            if context and hasattr(context, "pages") and len(context.pages) > 1:
+                target_page = context.pages[-1]
+                opened_new_page = True
+                try:
+                    await target_page.bring_to_front()
+                    await human_sleep(1.5, 3.0)
+                    await dismiss_blocking_modals(target_page)
+                except Exception:
+                    pass
+
             # Xử lý bình luận bài viết vừa mở
-            post_url = page.url
+            post_url = target_page.url
             rep_done = await process_post_comments_by_coordinates(
-                page=page,
+                page=target_page,
                 memory=memory,
                 current_post_url=post_url,
                 dry_run=dry_run,
@@ -2264,8 +2347,17 @@ async def process_facebook_notifications_tab(
             )
             replied_count += rep_done
 
-            # Quay lại trang Thông báo để tiếp tục quét
-            if page.url != META_NOTIFICATIONS_URL:
+            if opened_new_page:
+                try:
+                    await target_page.close()
+                except Exception:
+                    pass
+                try:
+                    await page.bring_to_front()
+                except Exception:
+                    pass
+            elif page.url != META_NOTIFICATIONS_URL:
+                # Quay lại trang Thông báo để tiếp tục quét
                 try:
                     await page.goto(META_NOTIFICATIONS_URL, wait_until="domcontentloaded", timeout=45000)
                     await human_sleep(2.5, 4.0)

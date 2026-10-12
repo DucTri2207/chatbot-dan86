@@ -171,6 +171,14 @@ def clean_customer_name(name: str) -> str:
         flags=re.IGNORECASE,
     ).strip()
 
+    # Loại bỏ hậu tố nhóm thông báo nhiều người: 'Đức Trí và 1 người khác', 'Đức Trí and 2 others'
+    cleaned = re.sub(
+        r"\s+(?:và|and)\s+(?:\d+\s+(?:người khác|others?)|[^\n]+)$",
+        "",
+        cleaned,
+        flags=re.IGNORECASE,
+    ).strip()
+
     norm = " ".join(cleaned.lower().split())
     if not norm or is_system_label(norm):
         return "bạn"

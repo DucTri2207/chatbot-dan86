@@ -25,6 +25,7 @@ from bot.page_bot_engine import (
     physical_mouse_click,
     process_facebook_notifications_tab,
     process_post_comments_by_coordinates,
+    send_private_inbox_to_commenter,
 )
 
 
@@ -144,6 +145,44 @@ class TestNotificationsParser(unittest.TestCase):
             matches = any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST)
             self.assertEqual(matches, expected, f"Tác giả '{name}' kiểm tra whitelist thất bại!")
 
+    def test_parse_da_tra_loi_notification(self):
+        text = "Đức Trí đã trả lời một bình luận: 'Báo giá em với' · 2 phút"
+        res = parse_notification_text(text)
+        self.assertTrue(res["is_comment_notif"])
+        self.assertEqual(res["author_name"], "Đức Trí")
+        self.assertEqual(res["comment_snippet"], "Báo giá em với")
+        self.assertEqual(res["time_str"], "2 phút")
+        self.assertFalse(res["is_old"])
+
+        text2 = "Trí Đức đã trả lời bình luận của bạn · 10 giây"
+        res2 = parse_notification_text(text2)
+        self.assertTrue(res2["is_comment_notif"])
+        self.assertEqual(res2["author_name"], "Trí Đức")
+
+    def test_parse_da_nhac_den_notification(self):
+        text = "Đức Trí đã nhắc đến bạn trong một bình luận: 'Shop tư vấn giúp mình' · 1 phút"
+        res = parse_notification_text(text)
+        self.assertTrue(res["is_comment_notif"])
+        self.assertEqual(res["author_name"], "Đức Trí")
+        self.assertEqual(res["comment_snippet"], "Shop tư vấn giúp mình")
+
+        text_en = "Duc Tri mentioned you in a comment: 'Great product' · 5m ago"
+        res_en = parse_notification_text(text_en)
+        self.assertTrue(res_en["is_comment_notif"])
+        self.assertEqual(res_en["author_name"], "Duc Tri")
+        self.assertEqual(res_en["comment_snippet"], "Great product")
+
+    def test_parse_grouped_multi_author_notification(self):
+        text = "Đức Trí và 1 người khác đã bình luận về bài viết của bạn: 'Báo giá' · 5 phút"
+        res = parse_notification_text(text)
+        self.assertTrue(res["is_comment_notif"])
+        self.assertEqual(res["author_name"], "Đức Trí")
+
+        text_en = "Duc Tri and 2 others commented on your post · 3m"
+        res_en = parse_notification_text(text_en)
+        self.assertTrue(res_en["is_comment_notif"])
+        self.assertEqual(res_en["author_name"], "Duc Tri")
+
 
 class TestCoordinateEngine(unittest.TestCase):
     """Kiểm tra Động cơ Tọa độ DOM F12 Vật lý (Coordinate-based DOM Engine)."""
@@ -197,6 +236,65 @@ class TestCoordinateEngine(unittest.TestCase):
             success = await click_element_at_physical_coordinates(page, loc)
             self.assertTrue(success)
             page.mouse.click.assert_awaited_once_with(125.0, 220.0)
+
+        asyncio.run(run_test())
+
+    def test_target_author_filter_enforcement_in_post_comments(self):
+        async def run_test():
+            page = MagicMock()
+            page.url = "https://business.facebook.com/latest/posts/12345"
+
+            # Post info has 2 comments: Comment 0 from 'Khách Khác', Comment 1 from 'Đức Trí'
+            panel_info = {
+                "post_id": "12345",
+                "unreplied_comments": [
+                    {
+                        "author_name": "Khách Khác",
+                        "comment_text": "Bình luận trước",
+                        "dom_index": 0,
+                        "has_page_reply": False,
+                    },
+                    {
+                        "author_name": "Đức Trí",
+                        "comment_text": "Cần tư vấn quà tặng",
+                        "dom_index": 1,
+                        "has_page_reply": False,
+                    },
+                ],
+            }
+
+            memory = MagicMock()
+            memory.is_customer_in_cooldown = MagicMock(return_value=False)
+            memory.should_reply_comment = MagicMock(return_value=(True, "cmt:12345:1"))
+            memory.prepare_comment_and_inbox_replies = MagicMock(return_value=("Chào Đức Trí", "Inbox Đức Trí"))
+            memory.mark_comment_replied = MagicMock()
+
+            with patch("bot.page_bot_engine.ensure_newest_comments_filter", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.expand_all_comment_replies", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.inspect_comment_panel", new_callable=AsyncMock, return_value=panel_info), \
+                 patch("bot.page_bot_engine.tag_comment_target_in_dom", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.locate_nested_reply_box", new_callable=AsyncMock, return_value=make_coord_mock_locator(rect_val={"x": 350.0, "y": 250.0, "width": 500.0, "height": 40.0})), \
+                 patch("bot.page_bot_engine.type_human_like", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.physical_mouse_click", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.click_element_at_physical_coordinates", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.send_private_inbox_to_commenter", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock):
+
+                page.keyboard = MagicMock()
+                page.keyboard.press = AsyncMock()
+                page.locator = MagicMock(return_value=make_coord_mock_locator())
+
+                # Target filter specifies 'Đức Trí'
+                res = await process_post_comments_by_coordinates(
+                    page=page,
+                    memory=memory,
+                    target_author_filter="Đức Trí",
+                    max_comments=1,
+                )
+
+                self.assertEqual(res, 1)
+                # Verify that Đức Trí was targeted and prepared
+                memory.prepare_comment_and_inbox_replies.assert_called_with("Đức Trí")
 
         asyncio.run(run_test())
 
@@ -363,6 +461,52 @@ class TestNotificationsTabWorkflow(unittest.TestCase):
                 # Đã được rep hoàn tất -> Bỏ qua, không gọi post processor
                 self.assertEqual(replied, 0)
                 mock_post_proc.assert_not_awaited()
+
+        asyncio.run(run_test())
+
+    def test_notifications_scanner_handles_new_page_popup(self):
+        async def run_test():
+            page = MagicMock()
+            page.url = META_NOTIFICATIONS_URL
+            page.goto = AsyncMock()
+            page.mouse = MagicMock()
+            page.mouse.click = AsyncMock()
+
+            new_page = MagicMock()
+            new_page.url = "https://business.facebook.com/latest/posts/99999"
+            new_page.bring_to_front = AsyncMock()
+            new_page.close = AsyncMock()
+
+            context = MagicMock()
+            context.pages = [page, new_page]
+            page.context = context
+
+            notifs = [
+                {
+                    "index": 0,
+                    "text": "Đức Trí đã bình luận về bài viết của bạn: 'Tư vấn' · 1 phút",
+                    "coords": {"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0},
+                }
+            ]
+
+            notif_loc = make_coord_mock_locator(rect_val={"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0})
+            page.locator = MagicMock(return_value=notif_loc)
+
+            with patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.dismiss_blocking_modals", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.inspect_notifications_list", new_callable=AsyncMock, return_value=notifs), \
+                 patch("bot.page_bot_engine.click_element_at_physical_coordinates", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.process_post_comments_by_coordinates", new_callable=AsyncMock, return_value=1) as mock_post_proc, \
+                 patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock):
+
+                replied = await process_facebook_notifications_tab(page, self.memory, dry_run=False)
+
+                self.assertEqual(replied, 1)
+                new_page.bring_to_front.assert_awaited()
+                mock_post_proc.assert_awaited_once()
+                self.assertEqual(mock_post_proc.call_args[1]["page"], new_page)
+                self.assertEqual(mock_post_proc.call_args[1]["target_author_filter"], "Đức Trí")
+                new_page.close.assert_awaited_once()
 
         asyncio.run(run_test())
 
