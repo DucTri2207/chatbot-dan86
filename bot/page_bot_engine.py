@@ -2075,10 +2075,11 @@ async def process_post_comments_by_coordinates(
                     post_id=post_id,
                 )
                 if existing_rec and not existing_rec.get("private_inbox_sent"):
-                    target_candidate = cand
-                    target_key = comment_key
-                    needs_inbox_only = True
-                    break
+                    if existing_rec.get("inbox_attempts", 0) < 2:
+                        target_candidate = cand
+                        target_key = comment_key
+                        needs_inbox_only = True
+                        break
 
         if target_candidate is None:
             logger.debug("Tất cả bình luận chưa rep trên bài viết này đã được xử lý trong memory hoặc không hợp lệ.")

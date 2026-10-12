@@ -474,7 +474,7 @@ class BotMemoryStore:
             "public_reply": public_reply or existing.get("public_reply", ""),
             "private_inbox_sent": bool(private_inbox_sent or existing.get("private_inbox_sent", False)),
             "private_reply_text": private_reply_text or existing.get("private_reply_text", ""),
-            "replied_at": ts,
+            "replied_at": existing.get("replied_at", ts) if (existing and not private_inbox_sent) else ts,
             "post_id": pid,
             "dom_index": d_idx,
             "inbox_attempts": inbox_attempts,
