@@ -123,3 +123,108 @@ class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
         self.assertEqual(action, "FIRST_REPLY")
         self.assertIn("https://dan86.vn", first_rep)
         self.assertNotIn("0933", first_rep)
+
+    def test_r5_messenger_conversation_customer_mentioning_website_not_misclassified(self):
+        """
+        R5: Đảm bảo khách hàng nhắn tin chứa từ khóa 'dan86.vn' hoặc 'nhân viên tư vấn'
+        KHÔNG bao giờ bị nhận diện nhầm là tin nhắn của Page (isPage=False, last_sender_is_page=False).
+        """
+        import asyncio
+        from playwright.async_api import async_playwright
+        from bot.page_bot_engine import inspect_messenger_conversation
+
+        async def run_async():
+            async with async_playwright() as p:
+                browser = await p.chromium.launch(headless=True)
+                page = await browser.new_page(viewport={"width": 1280, "height": 800})
+
+                # Test A: Khách gửi câu hỏi chứa link dan86.vn ở lề trái (x: 390px)
+                html_customer_inquiry = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <div role="complementary" style="position: absolute; left: 1150px; top: 100px;">
+                    <h2>Trần Gia Linh</h2>
+                  </div>
+                  <div style="position: absolute; left: 390px; top: 200px; width: 300px; height: 50px;" dir="auto">
+                    Shop ơi em xem trên web dan86.vn có set quà này không ạ?
+                  </div>
+                </body>
+                </html>
+                """
+                await page.set_content(html_customer_inquiry)
+                conv_info = await inspect_messenger_conversation(page)
+                self.assertEqual(conv_info["customer_name"], "Trần Gia Linh")
+                self.assertFalse(conv_info["last_sender_is_page"], "Tin nhắn hỏi về dan86.vn ở lề trái KHÔNG ĐƯỢC coi là của Page!")
+                self.assertFalse(conv_info["has_prior_page_messages"])
+                self.assertIn("dan86.vn", conv_info["last_message_text"])
+
+                # Test B: Khách hỏi 'Cho em gặp nhân viên tư vấn' ở lề trái
+                html_customer_staff = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <div role="complementary" style="position: absolute; left: 1150px; top: 100px;">
+                    <h2>Huỳnh Chí Đông Hải</h2>
+                  </div>
+                  <div style="position: absolute; left: 390px; top: 200px; width: 300px; height: 50px;" dir="auto">
+                    Cho em gặp nhân viên tư vấn về đơn quà sỉ nhé
+                  </div>
+                </body>
+                </html>
+                """
+                await page.set_content(html_customer_staff)
+                conv_info_staff = await inspect_messenger_conversation(page)
+                self.assertEqual(conv_info_staff["customer_name"], "Huỳnh Chí Đông Hải")
+                self.assertFalse(conv_info_staff["last_sender_is_page"], "Khách hỏi nhân viên tư vấn ở lề trái KHÔNG ĐƯỢC coi là của Page!")
+
+                # Test C: Tin nhắn của Fanpage ở lề phải (x: 650px)
+                html_page_reply = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <div role="complementary" style="position: absolute; left: 1150px; top: 100px;">
+                    <h2>Vy Vy</h2>
+                  </div>
+                  <!-- Tin 1: Khách gửi -->
+                  <div style="position: absolute; left: 390px; top: 200px; width: 250px; height: 40px;" dir="auto">
+                    Chào shop
+                  </div>
+                  <!-- Tin 2: Page rep ở lề phải -->
+                  <div style="position: absolute; left: 650px; top: 260px; width: 400px; height: 60px;" dir="auto">
+                    Dạ DAN86 xin chào Vy Vy! Mời bạn xem tại https://dan86.vn nha!
+                  </div>
+                </body>
+                </html>
+                """
+                await page.set_content(html_page_reply)
+                conv_page = await inspect_messenger_conversation(page)
+                self.assertTrue(conv_page["last_sender_is_page"], "Tin nhắn của shop ở lề phải PHẢI được nhận diện là Page!")
+
+                # Test D: Fanpage đã gửi tin nhắn trước đó, khách nhắn lại ở lề trái
+                html_customer_followup = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <div role="complementary" style="position: absolute; left: 1150px; top: 100px;">
+                    <h2>Vy Vy</h2>
+                  </div>
+                  <!-- Tin 1: Page chào -->
+                  <div style="position: absolute; left: 650px; top: 200px; width: 400px; height: 60px;" dir="auto">
+                    Dạ DAN86 xin chào Vy Vy!
+                  </div>
+                  <!-- Tin 2: Khách nhắn lại -->
+                  <div style="position: absolute; left: 390px; top: 280px; width: 250px; height: 40px;" dir="auto">
+                    Mình muốn đặt 10 set
+                  </div>
+                </body>
+                </html>
+                """
+                await page.set_content(html_customer_followup)
+                conv_followup = await inspect_messenger_conversation(page)
+                self.assertFalse(conv_followup["last_sender_is_page"], "Khách nhắn lại thì người gửi cuối PHẢI là khách (False)!")
+                self.assertTrue(conv_followup["has_prior_page_messages"], "Trước đó shop đã gửi tin nên has_prior_page_messages PHẢI là True!")
+
+                await browser.close()
+
+        asyncio.run(run_async())

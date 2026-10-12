@@ -2686,15 +2686,22 @@ async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
             }
 
             const r = node.getBoundingClientRect();
-            // Tin nhắn của Fanpage: nằm bên phải (r.left > 620) hoặc có chữ ký shop
-            const hasBrandSignature = (
+            // Khung chat Messenger MBS nằm trong khoảng x: 380..1120 (tâm trục ngang ~ 750)
+            // Tin nhắn của khách luôn bám sát lề trái (r.left < 540).
+            // Tin nhắn của Fanpage bám sát lề phải (r.left > 600 hoặc tâm bong bóng lệch phải > 750).
+            const isLeftCustomer = r.left < 540;
+            const isRightAligned = r.left > 600 || ((r.left + r.right) / 2 > 750);
+
+            // Chữ ký nhận diện Page CHỈ được xét khi tin nhắn KHÔNG nằm ở lề trái của khách (tránh nhận nhầm khi khách hỏi về website/tư vấn)
+            const hasBrandSignature = !isLeftCustomer && (
                 lower.includes("dan86.vn") ||
                 lower.includes("0933 133 516") ||
                 lower.includes("nhân viên tư vấn") ||
-                lower.includes("bộ phận tư vấn")
+                lower.includes("bộ phận tư vấn") ||
+                lower.includes("dần86farm") ||
+                lower.includes("bá lộc green")
             );
-            const isRightAligned = r.left > 620;
-            const isPage = hasBrandSignature || isRightAligned;
+            const isPage = !isLeftCustomer && (isRightAligned || hasBrandSignature);
 
             messages.push({ text: txt, isPage: isPage });
         }
