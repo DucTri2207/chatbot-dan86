@@ -1475,7 +1475,15 @@ async def process_facebook_comments_tab(
                             logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
 
                 # Tìm ô nhập phản hồi lồng nhau cấp 2 (nested reply box)
-                nested_box = page.locator('div[role="textbox"]:focus').first
+                nested_box = page.locator('div[role="textbox"]:focus, div[contenteditable="true"]:focus').first
+                if await nested_box.count() == 0 or not await nested_box.is_visible():
+                    nested_box = page.locator(
+                        'div:has-text("Trả lời với vai trò") div[role="textbox"], '
+                        'div:has-text("Reply as") div[role="textbox"], '
+                        'div:has-text("Viết câu trả lời") div[role="textbox"], '
+                        'div:has-text("Viết phản hồi") div[role="textbox"]'
+                    ).last
+
                 if await nested_box.count() == 0 or not await nested_box.is_visible():
                     nested_box = page.locator(
                         'div[role="textbox"][aria-label*="Trả lời với vai trò"], '
