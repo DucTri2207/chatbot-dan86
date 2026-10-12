@@ -121,8 +121,8 @@ TEST_ONLY_AUTHOR_WHITELIST: List[str] = [
     "tri duc",
 ]
 
-# Cooldown chống Spam cấp độ khách hàng: Nếu một khách hàng vừa được rep trong vòng 5-10 phút gần nhất, KHÔNG ĐƯỢC rep tiếp liên tục.
-CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS: float = 300.0  # 5 phút (300 giây)
+# Cooldown chống Spam cấp độ khách hàng: Nếu một khách hàng vừa được rep trong vòng 60 giây gần nhất trên cùng bài viết, KHÔNG ĐƯỢC rep tiếp liên tục.
+CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS: float = 60.0  # 60 giây (1 phút)
 
 
 def is_system_label(text: str) -> bool:
@@ -180,7 +180,7 @@ SCAN_INTERVAL_SECONDS = (15, 30)          # Khoảng nghỉ giữa mỗi chu k�
 ACTION_COOLDOWN_SECONDS = (5, 10)         # Nghỉ ngơi giữa mỗi khách hàng (5 - 10 giây)
 TYPING_DELAY_MS = (20, 45)                # Tốc độ gõ từng ký tự (ms) như người thật
 SILENCE_REMINDER_MINUTES = 180            # 3 tiếng (180 phút): 2 bên im lặng quá 3 tiếng khách nhắn lại mới báo tin chờ 1 lần
-MAX_THREADS_PER_CYCLE = 10                # Số hội thoại tối đa kiểm tra mỗi vòng quét
+MAX_THREADS_PER_CYCLE = 20                # Số hội thoại tối đa kiểm tra mỗi vòng quét (bao phủ toàn bộ bài viết)
 
 # ==============================================================================
 # 1. MẪU CÂU TRẢ LỜI BÌNH LUẬN CÔNG KHAI (RANDOM XOAY VÒNG - REP 1 LẦN DUY NHẤT)
