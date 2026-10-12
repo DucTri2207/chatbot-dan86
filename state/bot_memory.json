@@ -279,6 +279,14 @@
       "private_inbox_sent": true,
       "private_reply_text": "Dạ shop chào Bach Mai ạ! Cảm ơn bạn đã bình luận quan tâm đến Quà tặng thuần Việt DAN86 (CTY TNHH Bá Lộc Green). 🌾\nHiện shop đang có sẵn nhiều mẫu set quà tặng tinh tế kết hợp đặc sản và thủ công truyền thống:\n- Hộp quà mây tre đan, túi cỏ bàng, khăn rằn dệt tay.\n- Nông sản rang mộc, trà thảo mộc hữu cơ, mật ong rừng, tinh dầu thiên nhiên.\n🌐 Chi tiết sản phẩm: https://dan86.vn | 📞 Zalo/Hotline: 0933 133 516\nBạn đang cần tìm quà tặng cho cá nhân hay cho đoàn/doanh nghiệp để shop hỗ trợ mình ngay nhé!",
       "replied_at": 1791784759.5862067
+    },
+    "cmt:1164344392784258:2:bad0bdf55f363f4d": {
+      "author": "Ba Loc Tran",
+      "comment_text": "ibox",
+      "public_reply": "(Đã phản hồi bình luận công khai)",
+      "private_inbox_sent": false,
+      "private_reply_text": "Dạ chào Ba Loc Tran ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791785365.1585927
     }
   },
   "conversations": {
@@ -365,7 +373,7 @@
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
       "last_bot_reply_ts": 1791784815.2244275,
-      "last_interaction_ts": 1791785008.684531
+      "last_interaction_ts": 1791785465.7000332
     },
     "tid:100007295343728": {
       "customer_name": "Baochau Haphan",
@@ -405,7 +413,7 @@
     }
   },
   "stats": {
-    "comments_replied": 44,
+    "comments_replied": 54,
     "private_inboxes_from_comment": 21,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
