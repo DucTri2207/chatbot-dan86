@@ -285,8 +285,8 @@
       "comment_text": "ibox",
       "public_reply": "(Đã phản hồi bình luận công khai)",
       "private_inbox_sent": false,
-      "private_reply_text": "Dạ chào Ba Loc Tran ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Website: https://dan86.vn\n📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
-      "replied_at": 1791785365.1585927
+      "private_reply_text": "Chào Ba Loc Tran, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
+      "replied_at": 1791785822.4746704
     }
   },
   "conversations": {
@@ -373,7 +373,7 @@
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
       "last_bot_reply_ts": 1791784815.2244275,
-      "last_interaction_ts": 1791785465.7000332
+      "last_interaction_ts": 1791785920.8894122
     },
     "tid:100007295343728": {
       "customer_name": "Baochau Haphan",
@@ -413,7 +413,7 @@
     }
   },
   "stats": {
-    "comments_replied": 54,
+    "comments_replied": 64,
     "private_inboxes_from_comment": 21,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
