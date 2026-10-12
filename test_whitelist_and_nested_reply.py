@@ -386,6 +386,74 @@ class TestWhitelistAndNestedReply(unittest.TestCase):
           throw new Error("Scenario 3 failed (Author badge in DOM querySelector): Expected unreplied_count == 0, got " + res3.unreplied_count);
         }}
 
+        // Scenario 4 (Chống nhận nhầm): Khách hàng hỏi có nhắc chữ 'tác giả' trong câu hỏi
+        const doc4 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách Hàng vào 2 giờ trước", "Khách Hàng\\n2 giờ\\nChào shop\\ntác giả cho mình hỏi sản phẩm này\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc4;
+        const res4 = fn(pageNames);
+        if (res4.unreplied_count !== 1) {{
+          throw new Error("Scenario 4 failed (Customer mentions tác giả in question): Expected unreplied_count == 1, got " + res4.unreplied_count);
+        }}
+
+        // Scenario 5 (Chống nhận nhầm): Khách hỏi về 'quà tặng thuần việt' xuống dòng
+        const doc5 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Nguyễn Thị Mai vào 2 giờ trước", "Nguyễn Thị Mai\\n2 giờ\\nShop ơi\\nquà tặng thuần việt\\ngiá bao nhiêu ạ\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc5;
+        const res5 = fn(pageNames);
+        if (res5.unreplied_count !== 1) {{
+          throw new Error("Scenario 5 failed (Customer asks about quà tặng thuần việt on newline): Expected unreplied_count == 1, got " + res5.unreplied_count);
+        }}
+
+        // Scenario 6 (Chống nhận nhầm): Khách có tên Facebook là 'Author John'
+        const doc6 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Comment by Author John 2 hours ago", "Author John\\n2 hours ago\\nHow much is this set?\\nReply\\nSend message\\nHide", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc6;
+        const res6 = fn(pageNames);
+        if (res6.unreplied_count !== 1) {{
+          throw new Error("Scenario 6 failed (Customer named Author John): Expected unreplied_count == 1, got " + res6.unreplied_count);
+        }}
+
+        // Scenario 7 (Chống nhận nhầm): Khách có tên Facebook là 'Tác Giả Nguyễn'
+        const doc7 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Tác Giả Nguyễn vào 2 giờ trước", "Tác Giả Nguyễn\\n2 giờ\\nSet này bao nhiêu tiền?\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc7;
+        const res7 = fn(pageNames);
+        if (res7.unreplied_count !== 1) {{
+          throw new Error("Scenario 7 failed (Customer named Tác Giả Nguyễn): Expected unreplied_count == 1, got " + res7.unreplied_count);
+        }}
+
         console.log("ALL_SCENARIOS_OK");
         """
         res = subprocess.run(["node", "-e", node_script], capture_output=True, text=True, check=True)

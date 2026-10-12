@@ -1162,33 +1162,36 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
 
             // Nhận diện huy hiệu "Tác giả" / "Author" trên comment article:
-            // Nếu article có chứa 'tác giả', 'author', 'badge', hoặc biểu tượng tác giả của bài viết -> isPageReply = true
-            const hasAuthorBadge = lowerAria.includes("tác giả") ||
-                                   lowerAria.includes("author") ||
-                                   lowerInner.includes("tác giả\n") ||
-                                   lowerInner.includes("\ntác giả") ||
-                                   lowerInner.includes("author\n") ||
-                                   lowerInner.includes("\nauthor") ||
+            // 1. Loại trừ tên người bình luận khỏi aria-label để tránh nhận nhầm khách hàng có tên chứa 'Author'/'Tác giả'
+            const ariaWithoutAuthor = (mAria && mAria[1] ? aria.replace(mAria[1], '') : (authorName ? aria.replace(authorName, '') : aria)).toLowerCase();
+            const hasAuthorBadge = ariaWithoutAuthor.includes("tác giả") ||
+                                   ariaWithoutAuthor.includes("author") ||
                                    lines.some(l => {
+                                       if (l === authorName) return false;
                                        const low = l.toLowerCase();
                                        return low === 'tác giả' || low === 'author' ||
                                               low.startsWith('tác giả ·') || low.startsWith('author ·') ||
-                                              low.startsWith('tác giả\n') || low.startsWith('author\n');
+                                              low.startsWith('tác giả •') || low.startsWith('author •');
                                    }) ||
-                                   Boolean(art.querySelector('[aria-label*="tác giả" i], [aria-label*="author" i], [aria-label*="badge" i], [title*="tác giả" i], [title*="author" i], [title*="badge" i], [data-badge]')) ||
+                                   Boolean(art.querySelector('[aria-label*="tác giả" i]:not([role="article"]), [aria-label*="author" i]:not([role="article"]), [aria-label*="badge" i]:not([role="article"]), [title*="tác giả" i]:not([role="article"]), [title*="author" i]:not([role="article"]), [title*="badge" i]:not([role="article"]), [data-badge]')) ||
                                    Boolean(art.querySelector('svg[aria-label*="tác giả" i], svg[aria-label*="author" i], svg[aria-label*="badge" i]'));
 
-            // Kiểm tra xem article này là phản hồi của chính Fanpage hoặc Tác giả
+            // Kiểm tra xem article này là phản hồi của chính Fanpage hoặc Tác giả:
+            // - Khớp tên tác giả (lowAuthor, mAria, topLines) với PAGE_NAMES
+            // - Hoặc article có huy hiệu Tác giả / Author
             const lowAuthor = (authorName || '').toLowerCase();
+            const topLines = lines.slice(0, 3).map(l => l.toLowerCase());
             let isPageReply = hasAuthorBadge ||
                               lowerAria.includes("dưới tên dần86farm") ||
                               lowerAria.includes("dưới tên dan86") ||
-                              pageNames.some(p => lowerAria.includes(p) ||
+                              pageNames.some(p => (mAria && mAria[1] && mAria[1].toLowerCase().includes(p)) ||
                                                   lowAuthor.includes(p) ||
+                                                  lowerAria.includes("dưới tên " + p) ||
+                                                  lowerAria.includes("comment by " + p) ||
+                                                  topLines.some(tl => tl === p || tl.startsWith(p) || tl.endsWith(p)) ||
                                                   lowerInner.startsWith(p) ||
-                                                  lowerInner.includes(p + "\n") ||
-                                                  lowerInner.includes("tác giả\n" + p) ||
-                                                  lowerInner.includes("author\n" + p));
+                                                  lowerInner.startsWith("tác giả\n" + p) ||
+                                                  lowerInner.startsWith("author\n" + p));
 
             // Trích xuất dấu thời gian độc lập để kiểm tra bình luận cũ (tránh lọc nhầm nội dung khách)
             let timeStr = "";
