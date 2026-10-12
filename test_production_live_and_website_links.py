@@ -228,3 +228,30 @@ class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
                 await browser.close()
 
         asyncio.run(run_async())
+
+    def test_r6_clean_customer_name_emojis_and_whitelist_case_insensitivity(self):
+        """
+        R6: Đảm bảo clean_customer_name fallback về 'bạn' khi tên chỉ gồm emoji/ký tự đặc biệt,
+        và thuật toán lọc whitelist hoạt động chuẩn xác không phân biệt hoa thường khi whitelist có cấu hình.
+        """
+        from bot.bot_config import clean_customer_name
+        from bot.memory_store import normalize_text
+
+        # 1. Tên chỉ toàn emoji hoặc ký tự đặc biệt
+        self.assertEqual(clean_customer_name("🌸🌸"), "bạn")
+        self.assertEqual(clean_customer_name("✨🌸🎋"), "bạn")
+        self.assertEqual(clean_customer_name(":)))"), "bạn")
+        self.assertEqual(clean_customer_name("---"), "bạn")
+        self.assertEqual(clean_customer_name("???"), "bạn")
+
+        # 2. Tên người thật hợp lệ có chữ
+        self.assertEqual(clean_customer_name("Đức Trí"), "Đức Trí")
+        self.assertEqual(clean_customer_name("Nguyễn Văn Ẩn"), "Nguyễn Văn Ẩn")
+
+        # 3. Whitelist case-insensitivity với normalize_text
+        whitelist_uppercase = ["Đức Trí", "DẦN86"]
+        c_norm = normalize_text("nguyễn đức trí")
+        self.assertTrue(any(normalize_text(w) in c_norm for w in whitelist_uppercase))
+
+        c_norm_other = normalize_text("khách hàng lạ")
+        self.assertFalse(any(normalize_text(w) in c_norm_other for w in whitelist_uppercase))

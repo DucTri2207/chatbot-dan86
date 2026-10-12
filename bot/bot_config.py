@@ -178,6 +178,8 @@ def clean_customer_name(name: str) -> str:
         return "bạn"
     if len(cleaned) < 2 or len(cleaned) > 50:
         return "bạn"
+    if not any(c.isalnum() for c in cleaned):
+        return "bạn"
     return cleaned
 
 

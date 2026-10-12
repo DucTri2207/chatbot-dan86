@@ -67,7 +67,13 @@ class TestDan86BotLogic(unittest.TestCase):
         self.assertEqual(clean_customer_name("Comment by Trí Đức 2 hours ago"), "Trí Đức")
         self.assertEqual(clean_customer_name("Bình luận dưới tên Lệ Thuyền"), "Lệ Thuyền")
 
-        # 4. Tác giả là nhãn hệ thống thì should_reply_comment phải bỏ qua ngay lập tức
+        # 4. Tên chỉ chứa emoji hoặc ký tự đặc biệt -> Fallback về danh xưng mặc định 'bạn'
+        self.assertEqual(clean_customer_name("🌸🌸"), "bạn")
+        self.assertEqual(clean_customer_name(":)))"), "bạn")
+        self.assertEqual(clean_customer_name("..."), "bạn")
+        self.assertEqual(clean_customer_name("???"), "bạn")
+
+        # 5. Tác giả là nhãn hệ thống thì should_reply_comment phải bỏ qua ngay lập tức
         should_rep, _ = self.memory.should_reply_comment(
             author_name="Chỉ báo trạng thái online",
             comment_text="Đang hoạt động",

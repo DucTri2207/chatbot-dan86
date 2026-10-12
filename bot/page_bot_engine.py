@@ -2011,7 +2011,7 @@ async def process_post_comments_by_coordinates(
             # Chế độ thử nghiệm an toàn (nếu có cấu hình whitelist):
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(cand_author)
-                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                if not any(normalize_text(w) in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                     logger.info(
                         "Chế độ thử nghiệm: Bỏ qua khách [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).",
                         cand_author,
@@ -2255,7 +2255,7 @@ async def process_post_comments_by_coordinates(
         # Whitelist re-check trước khi gửi cmt công khai
         if TEST_ONLY_AUTHOR_WHITELIST:
             c_norm = normalize_text(cand_author)
-            if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+            if not any(normalize_text(w) in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                 logger.info(
                     "Chế độ thử nghiệm: Bỏ qua gửi cmt công khai cho [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).",
                     cand_author,
@@ -2373,7 +2373,7 @@ async def process_facebook_notifications_tab(
             # Whitelist filter (nếu có cấu hình)
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(author)
-                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                if not any(normalize_text(w) in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                     logger.info("Chế độ thử nghiệm: Bỏ qua thông báo từ [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).", author)
                     continue
 
@@ -2800,7 +2800,7 @@ async def process_messenger_inbox_tab(
             # Chế độ thử nghiệm an toàn (nếu có cấu hình whitelist):
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(customer_name)
-                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                if not any(normalize_text(w) in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                     logger.info("Chế độ thử nghiệm: Bỏ qua hội thoại Messenger từ [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).", customer_name)
                     continue
 

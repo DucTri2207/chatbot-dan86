@@ -310,27 +310,32 @@ class TestHardeningRegression(unittest.TestCase):
     def test_messenger_bubble_direction_and_sender_detection(self) -> None:
         """
         Kiểm tra logic nhận diện hướng tin nhắn trong Messenger:
-        - Bên trái (r.left < 620, không có brand signature) -> Khách hàng
-        - Bên phải (r.left > 620) -> Fanpage
-        - Chứa chữ ký thương hiệu (dan86.vn, 0933 133 516...) -> Fanpage
+        - Bên trái (r.left < 540): Luôn là Khách hàng (kể cả khi khách hỏi về https://dan86.vn hay nhân viên tư vấn).
+        - Bên phải (r.left > 600 hoặc tâm bong bóng lệch phải): Fanpage.
+        - Chữ ký thương hiệu chỉ áp dụng khi không nằm ở lề trái của khách.
         """
-        def classify_message(text: str, left: float) -> bool:
+        def classify_message(text: str, left: float, right: float = None) -> bool:
             lower = text.lower()
-            has_brand = any(sig in lower for sig in [
-                "dan86.vn", "0933 133 516", "nhân viên tư vấn", "bộ phận tư vấn"
+            if right is None:
+                right = left + 200.0
+            is_left_customer = left < 540
+            is_right_aligned = left > 600 or ((left + right) / 2 > 750)
+            has_brand = not is_left_customer and any(sig in lower for sig in [
+                "dan86.vn", "nhân viên tư vấn", "bộ phận tư vấn", "dần86farm", "bá lộc green"
             ])
-            is_right = left > 620
-            return has_brand or is_right
+            return not is_left_customer and (is_right_aligned or has_brand)
 
         # Tin nhắn khách (bên trái, không có chữ ký)
         self.assertFalse(classify_message("Shop ơi set quà này còn không?", left=410))
         self.assertFalse(classify_message("Gửi mình bảng giá nhé", left=520))
 
+        # Tin nhắn khách (bên trái, nhắc tới website hoặc xin gặp nhân viên) -> Vẫn là khách hàng (False)
+        self.assertFalse(classify_message("Shop ơi em xem trên website https://dan86.vn có set này không ạ?", left=400))
+        self.assertFalse(classify_message("Cho em gặp nhân viên tư vấn về đơn sỉ", left=450))
+
         # Tin nhắn Page (bên phải)
         self.assertTrue(classify_message("Dạ chào bạn, DAN86 sẵn lòng hỗ trợ!", left=750))
-        # Tin nhắn Page (có chữ ký thương hiệu dù ở bất kỳ tọa độ nào)
-        self.assertTrue(classify_message("Liên hệ Hotline/Zalo: 0933 133 516", left=450))
-        self.assertTrue(classify_message("Website chính thức: dan86.vn", left=400))
+        self.assertTrue(classify_message("Mời bạn xem trọn bộ tại website: https://dan86.vn", left=650))
 
     def test_messenger_vertical_bounds_excludes_textbox(self) -> None:
         """
