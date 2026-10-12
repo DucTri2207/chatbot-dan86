@@ -1,12 +1,12 @@
 {
-  "running": true,
+  "running": false,
   "pid": 2799,
   "mode": "live",
-  "cycle": 285,
+  "cycle": 286,
   "headless": true,
   "started_at": 1791763986.3731146,
-  "last_heartbeat": 1791783174.3504174,
-  "last_heartbeat_str": "2026-10-12 05:32:54",
+  "last_heartbeat": 1791783237.4501526,
+  "last_heartbeat_str": "2026-10-12 05:33:57",
   "stats": {
     "comments_replied": 38,
     "private_inboxes_from_comment": 18,
@@ -14,19 +14,6 @@
     "wait_staff_replies": 0
   },
   "recent_logs": [
-    "2026-10-12 05:27:18,261 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
-    "2026-10-12 05:27:18,273 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
-    "2026-10-12 05:27:34,213 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
-    "2026-10-12 05:27:34,213 [INFO] Hoàn tất chu kỳ #280: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 38, 'private_inboxes_from_comment': 18, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
-    "2026-10-12 05:27:34,216 [INFO] Nghỉ 25 giây trước chu kỳ quét tiếp theo...",
-    "2026-10-12 05:27:59,321 [INFO] --- Bắt đầu chu kỳ quét #281 ---",
-    "2026-10-12 05:27:59,321 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
-    "2026-10-12 05:28:03,954 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
-    "2026-10-12 05:28:03,961 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
-    "2026-10-12 05:28:20,126 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
-    "2026-10-12 05:28:20,126 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
-    "2026-10-12 05:28:26,393 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
-    "2026-10-12 05:28:26,407 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
     "2026-10-12 05:28:41,884 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
     "2026-10-12 05:28:41,884 [INFO] Hoàn tất chu kỳ #281: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 38, 'private_inboxes_from_comment': 18, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
     "2026-10-12 05:28:41,886 [INFO] Nghỉ 19 giây trước chu kỳ quét tiếp theo...",
@@ -73,6 +60,21 @@
     "2026-10-12 05:32:38,340 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
     "2026-10-12 05:32:38,348 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
     "2026-10-12 05:32:54,348 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
-    "2026-10-12 05:32:54,348 [INFO] Hoàn tất chu kỳ #285: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 38, 'private_inboxes_from_comment': 18, 'first_inbox_replies': 0, 'wait_staff_replies': 0}"
-  ]
+    "2026-10-12 05:32:54,348 [INFO] Hoàn tất chu kỳ #285: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 38, 'private_inboxes_from_comment': 18, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
+    "2026-10-12 05:32:55,586 [INFO] Đã đồng bộ Live Status & Memory lên GitHub VPS thành công.",
+    "2026-10-12 05:32:55,587 [INFO] Nghỉ 19 giây trước chu kỳ quét tiếp theo...",
+    "2026-10-12 05:33:14,117 [INFO] --- Bắt đầu chu kỳ quét #286 ---",
+    "2026-10-12 05:33:14,117 [INFO] Đang kiểm tra Tab Bình luận Facebook: https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512",
+    "2026-10-12 05:33:19,495 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
+    "2026-10-12 05:33:19,506 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
+    "2026-10-12 05:33:35,494 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
+    "2026-10-12 05:33:35,494 [INFO] Đang kiểm tra Tab Messenger Inbox: https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512",
+    "2026-10-12 05:33:41,525 [INFO] Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...",
+    "2026-10-12 05:33:41,536 [INFO] Bấm nút bắc cầu phiên Facebook sang Meta: div:has-text(\"Tiếp tục bằng Facebook\")",
+    "2026-10-12 05:33:57,445 [WARNING] Phiên đăng nhập Facebook chưa sẵn sàng hoặc đã hết hạn!",
+    "2026-10-12 05:33:57,446 [INFO] Hoàn tất chu kỳ #286: Đã xử lý 0 bình luận & 0 tin nhắn Inbox. Tổng thống kê: {'comments_replied': 38, 'private_inboxes_from_comment': 18, 'first_inbox_replies': 0, 'wait_staff_replies': 0}",
+    "2026-10-12 05:33:57,448 [INFO] Đã chạy đủ 320.9 / 320.0 phút của ca VPS hiện tại. Lưu bộ nhớ và chuyển ca mới..."
+  ],
+  "stopped_at": 1791783237.4501586,
+  "stopped_at_str": "2026-10-12 05:33:57"
 }
