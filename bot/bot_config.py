@@ -111,6 +111,16 @@ EXACT_SYSTEM_LABELS = {
 # Hợp nhất danh sách để tương thích ngược
 SYSTEM_BLACKLIST_STRINGS: List[str] = SYSTEM_PHRASES_BLACKLIST + list(EXACT_SYSTEM_LABELS)
 
+# CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
+# Nếu danh sách này không rỗng, Bot TUYỆT ĐỐI CHỈ tương tác (rep cmt & gửi inbox) với các khách hàng trong danh sách này!
+# Người dùng yêu cầu: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
+TEST_ONLY_AUTHOR_WHITELIST: List[str] = [
+    "đức trí",
+    "trí đức",
+    "duc tri",
+    "tri duc",
+]
+
 
 def is_system_label(text: str) -> bool:
     """Kiểm tra một chuỗi có phải là nhãn hệ thống/nút bấm của Facebook hay không."""

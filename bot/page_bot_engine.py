@@ -33,6 +33,7 @@ from bot.bot_config import (
     PAGE_NAMES,
     STORAGE_STATE_FILE,
     SYSTEM_BLACKLIST_STRINGS,
+    TEST_ONLY_AUTHOR_WHITELIST,
     TYPING_DELAY_MS,
     clean_customer_name,
 )
@@ -713,7 +714,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
             const rBtn = candidateEls.find(isReplyBtn);
             const mBtn = candidateEls.find(isMsgBtn);
-
+            const rect = art.getBoundingClientRect();
             parsedComments.push({
                 domIndex: allArticles.indexOf(art),
                 isPageReply: isPageReply,
@@ -724,11 +725,13 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 hasReplyBtn: !!rBtn,
                 msgBtnText: mBtn ? ((mBtn.innerText || '').trim() || (mBtn.getAttribute('aria-label') || '').trim()) : "",
                 innerPreview: inner.slice(0, 100),
-                articleEl: art
+                articleEl: art,
+                left: rect.left,
+                top: rect.top
             });
         }
 
-        // Đánh giá xem bình luận nào có phản hồi của Page ngay bên dưới
+        // Đánh giá xem bình luận nào có phản hồi của Page lồng ngay bên dưới
         for (let j = 0; j < parsedComments.length; j++) {
             const item = parsedComments[j];
             if (item.isPageReply) {
@@ -737,8 +740,20 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
 
             let hasReplyBelow = false;
-            if (j + 1 < parsedComments.length && parsedComments[j + 1].isPageReply) {
-                hasReplyBelow = true;
+            // Chỉ coi article tiếp theo là phản hồi của item này nếu:
+            // 1. Article tiếp theo là của Page (isPageReply == true)
+            // VÀ 2. Article tiếp theo PHẢI THỤT LỀ (nested reply): nextItem.left > item.left + 15!
+            // Nếu nextItem.left <= item.left + 10, đó là bình luận cấp 1 tiếp theo -> kết thúc nhánh
+            for (let k = j + 1; k < parsedComments.length; k++) {
+                const nextItem = parsedComments[k];
+                if (nextItem.left <= item.left + 10) {
+                    // Đã chạm đến bình luận cấp 1 tiếp theo -> kết thúc nhánh phản hồi
+                    break;
+                }
+                if (nextItem.left > item.left + 15 && nextItem.isPageReply) {
+                    hasReplyBelow = true;
+                    break;
+                }
             }
             item.hasPageReply = hasReplyBelow;
         }
@@ -1335,28 +1350,26 @@ async def process_facebook_comments_tab(
                         logger.info("Bình luận cũ từ [%s] (Thời gian: '%s'). BỎ QUA 100%!", cand_author, cand.get("time_str", "") or cand.get("innerPreview", "")[:30])
                         continue
 
+                    # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
+                    # Người dùng chỉ đạo: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
+                    if TEST_ONLY_AUTHOR_WHITELIST:
+                        c_norm = normalize_text(cand_author)
+                        if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                            logger.info("Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", cand_author)
+                            continue
+
                     should_rep, comment_key = memory.should_reply_comment(
                         author_name=cand_author,
                         comment_text=cand_text,
-                        has_page_reply_in_dom=cand_has_reply,
+                        has_page_reply_in_dom=False,  # Bỏ qua luật chờ phản hồi theo chỉ đạo: Cứ cmt là phải vào rep ngay!
                         post_id=post_id,
                         dom_index=cand_idx,
                     )
-                    if should_rep:
-                        target_candidate = cand
-                        target_key = comment_key
-                        needs_inbox_only = False
-                        break
-
-                    # Luật bắt buộc: Nếu bình luận MỚI đã có câu trả lời bên dưới (cand_has_reply = True),
-                    # nhưng chưa được gửi tin nhắn riêng trong memory -> Bắt buộc nhắn 1 tin riêng cho khách!
-                    if cand_has_reply and comment_key:
-                        existing_rec = memory.data["replied_comments"].get(comment_key)
-                        if not existing_rec or not existing_rec.get("private_inbox_sent"):
-                            target_candidate = cand
-                            target_key = comment_key
-                            needs_inbox_only = True
-                            break
+                    # Luật người dùng: Cứ cmt bình luận là phải vào rep công khai ngay, bỏ qua luật chờ phản hồi!
+                    target_candidate = cand
+                    target_key = comment_key
+                    needs_inbox_only = False
+                    break
 
                 # Nếu tất cả các candidate đều đã được xử lý trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
                 if target_candidate is None:
@@ -1472,19 +1485,46 @@ async def process_facebook_comments_tab(
                     ).first
 
                 if (await nested_box.count() == 0 or not await nested_box.is_visible()) and target_art is not None:
-                    nested_box = target_art.locator('div[role="textbox"]').first
+                    # Tìm ô textbox nằm trong hoặc nằm ngay liền sau comment article vừa bấm
+                    following_box = target_art.locator('xpath=following::div[@role="textbox"][1]').first
+                    if await following_box.count() > 0 and await following_box.is_visible():
+                        nested_box = following_box
+                    else:
+                        nested_box = target_art.locator('div[role="textbox"]').first
+
+                # Nếu trình duyệt đang active focus vào bất kỳ contenteditable/textarea nào
+                if await nested_box.count() == 0 or not await nested_box.is_visible():
+                    focus_el = page.locator(':focus').first
+                    if await focus_el.count() > 0:
+                        try:
+                            is_edit = await focus_el.evaluate("el => el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'")
+                            if is_edit:
+                                nested_box = focus_el
+                        except Exception:
+                            pass
 
                 is_valid_nested_box = False
                 if await nested_box.count() > 0 and await nested_box.is_visible():
                     box_aria = (await nested_box.get_attribute("aria-label") or "").lower()
                     box_placeholder = (await nested_box.get_attribute("placeholder") or "").lower()
-                    if "bình luận dưới tên" in box_aria or "viết bình luận" in box_placeholder:
-                        logger.warning("Phát hiện ô bình luận bài viết cấp 1! Bỏ qua để không đăng nhầm cmt cấp 1!")
+                    is_post_level_box = (
+                        not reply_clicked
+                        and ("bình luận công khai" in box_aria or "bình luận dưới tên" in box_aria or "viết bình luận" in box_placeholder)
+                        and ("trả lời" not in box_aria and "reply" not in box_aria and "phản hồi" not in box_aria)
+                    )
+                    if is_post_level_box:
+                        logger.warning("Phát hiện ô bình luận bài viết cấp 1 (chưa bấm Trả lời)! Bỏ qua để không đăng nhầm cmt cấp 1!")
                         is_valid_nested_box = False
                     else:
                         is_valid_nested_box = True
 
                 if is_valid_nested_box:
+                    if TEST_ONLY_AUTHOR_WHITELIST:
+                        c_norm = normalize_text(cand_author)
+                        if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                            logger.info("Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).", cand_author)
+                            continue
+
                     await type_human_like(page, nested_box, public_reply)
                     await page.keyboard.press("Enter")
                     await human_sleep(2.5, 4.0)
@@ -1734,6 +1774,14 @@ async def process_messenger_inbox_tab(
             if last_sender_is_page:
                 memory.touch_staff_interaction(customer_name=customer_name, thread_id=thread_id)
                 continue
+
+            # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
+            # Người dùng chỉ đạo: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
+            if TEST_ONLY_AUTHOR_WHITELIST:
+                c_norm = normalize_text(customer_name)
+                if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                    logger.info("Chế độ thử nghiệm an toàn: Bỏ qua hội thoại Messenger từ [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", customer_name)
+                    continue
 
             action, reply_text, thread_key = memory.decide_inbox_action(
                 customer_name=customer_name,
