@@ -14,9 +14,9 @@ from bot.memory_store import BotMemoryStore
 
 class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
     """
-    Bộ kiểm thử Production Live và Chuẩn hóa Link Website (Bỏ SĐT, chỉ để https://dan86.vn):
+    Bộ kiểm thử Production Live và Chuẩn hóa Link Website (Bỏ SĐT, Messenger giữ https://dan86.vn, Comment loại bỏ link chống Meta ẩn cmt):
     R1: Mở khóa tương tác cho tất cả khách hàng (TEST_ONLY_AUTHOR_WHITELIST = []).
-    R2: 100% template loại bỏ SĐT, Hotline, Zalo; tích hợp https://dan86.vn.
+    R2: Anti-Spam Meta: COMMENT_REPLIES 100% KHÔNG chứa link web/URL. 3 nhóm Messenger giữ 100% https://dan86.vn.
     R3: Xác minh cơ chế pick_template chống lặp 2 câu liên tiếp và phân bố ngẫu nhiên.
     """
 
@@ -25,17 +25,47 @@ class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
         self.assertEqual(TEST_ONLY_AUTHOR_WHITELIST, [], "TEST_ONLY_AUTHOR_WHITELIST phải là list rỗng trong Production Live.")
 
     def test_r2_templates_contain_website_and_no_phone_or_hotline(self):
-        """R2: 100% template trong cả 4 nhóm đều chứa https://dan86.vn và KHÔNG chứa SĐT/Hotline/Zalo."""
-        all_groups = {
-            "COMMENT_REPLIES": COMMENT_REPLIES,
+        """
+        R2: 
+        - COMMENT_REPLIES (Bình luận công khai): Tuyệt đối KHÔNG chứa bất kỳ link web/URL nào để tránh Meta ẩn comment.
+        - 3 nhóm tin nhắn riêng Messenger: Bảo toàn 100% link website https://dan86.vn.
+        - Toàn bộ template không chứa SĐT/Hotline/Zalo.
+        """
+        messenger_groups = {
             "PRIVATE_REPLIES_FROM_COMMENT": PRIVATE_REPLIES_FROM_COMMENT,
             "FIRST_INBOX_REPLIES": FIRST_INBOX_REPLIES,
             "WAIT_STAFF_REPLIES": WAIT_STAFF_REPLIES,
         }
 
         forbidden_keywords = ["0933", "133 516", "133516", "hotline", "zalo", "sđt", "số điện thoại"]
+        forbidden_link_patterns = ["http://", "https://", "dan86.vn", "www.", ".vn", ".com"]
 
-        for group_name, templates in all_groups.items():
+        # 1. Kiểm tra nhóm COMMENT_REPLIES (Anti-Spam Meta Comment)
+        self.assertGreater(len(COMMENT_REPLIES), 0, "Nhóm COMMENT_REPLIES không được rỗng.")
+        for idx, tmpl in enumerate(COMMENT_REPLIES):
+            lower_tmpl = tmpl.lower()
+            # Cấm SĐT và Hotline/Zalo
+            for kw in forbidden_keywords:
+                self.assertNotIn(
+                    kw,
+                    lower_tmpl,
+                    f"COMMENT_REPLIES[{idx}] vẫn chứa từ khóa cấm '{kw}': {tmpl}",
+                )
+            # CẤM tuyệt đối mọi dạng link website trong bình luận công khai
+            for link_pat in forbidden_link_patterns:
+                self.assertNotIn(
+                    link_pat,
+                    lower_tmpl,
+                    f"COMMENT_REPLIES[{idx}] vi phạm Anti-Spam (chứa link '{link_pat}'): {tmpl}",
+                )
+            # Phải có placeholder {name}
+            self.assertIn("{name}", tmpl, f"COMMENT_REPLIES[{idx}] thiếu placeholder {{name}}: {tmpl}")
+            formatted = tmpl.format(name="Đức Trí")
+            self.assertIn("Đức Trí", formatted)
+            self.assertNotIn("{name}", formatted)
+
+        # 2. Kiểm tra 3 nhóm tin nhắn riêng Messenger (Bảo toàn 100% link https://dan86.vn)
+        for group_name, templates in messenger_groups.items():
             self.assertGreater(len(templates), 0, f"Nhóm {group_name} không được rỗng.")
             for idx, tmpl in enumerate(templates):
                 lower_tmpl = tmpl.lower()
@@ -84,7 +114,11 @@ class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
             for _ in range(iterations):
                 chosen = pick_template(templates, customer_name="Anh Tuấn", category_key=cat_key)
                 self.assertIn("Anh Tuấn", chosen)
-                self.assertIn("https://dan86.vn", chosen)
+                if cat_key == "cmt":
+                    self.assertNotIn("http", chosen.lower(), "Bình luận công khai KHÔNG ĐƯỢC CHỨA link!")
+                    self.assertNotIn("dan86.vn", chosen.lower())
+                else:
+                    self.assertIn("https://dan86.vn", chosen)
 
                 # Không lặp 2 câu liên tiếp
                 if prev is not None and len(templates) > 1:
@@ -104,13 +138,14 @@ class TestProductionLiveAndWebsiteLinks(unittest.TestCase):
             )
 
     def test_r4_memory_store_integration(self):
-        """R4: Kiểm tra BotMemoryStore sinh tin nhắn phản hồi với link website chuẩn."""
+        """R4: Kiểm tra BotMemoryStore sinh tin nhắn phản hồi chuẩn (cmt không link, inbox có link)."""
         memory = BotMemoryStore()
 
         pub_rep, priv_rep = memory.prepare_comment_and_inbox_replies("Khách Hàng Mới")
         self.assertIn("Khách Hàng Mới", pub_rep)
-        self.assertIn("https://dan86.vn", pub_rep)
-        self.assertIn("https://dan86.vn", priv_rep)
+        self.assertNotIn("http", pub_rep.lower(), "Bình luận công khai không chứa URL")
+        self.assertNotIn("dan86.vn", pub_rep.lower(), "Bình luận công khai không chứa domain")
+        self.assertIn("https://dan86.vn", priv_rep, "Inbox riêng phải chứa link website")
         self.assertNotIn("0933", pub_rep)
         self.assertNotIn("0933", priv_rep)
 

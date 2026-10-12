@@ -101,7 +101,9 @@ class TestDan86BotLogic(unittest.TestCase):
 
         pub_reply, priv_reply = self.memory.prepare_comment_and_inbox_replies("Nguyễn Văn A")
         self.assertIn("Nguyễn Văn A", pub_reply)
-        self.assertIn("dan86.vn", priv_reply)
+        self.assertNotIn("http", pub_reply.lower(), "Bình luận công khai KHÔNG ĐƯỢC CHỨA URL!")
+        self.assertNotIn("dan86.vn", pub_reply.lower(), "Bình luận công khai KHÔNG ĐƯỢC CHỨA domain website!")
+        self.assertIn("dan86.vn", priv_reply, "Tin nhắn riêng Messenger phải chứa website dan86.vn")
 
         self.memory.mark_comment_replied(
             comment_key=key,
@@ -778,6 +780,34 @@ class TestDan86BotLogic(unittest.TestCase):
         self.assertIsNotNone(selected_cand_2)
         self.assertEqual(selected_cand_2["author_name"], "Khách B", "Đức Trí phải bị skip do cooldown, Khách B phải được chọn!")
         self.assertTrue(needs_inbox_only_2, "Khách B đã có reply trên DOM nhưng chưa gửi inbox -> Phải kích hoạt needs_inbox_only = True!")
+
+    def test_14_comment_replies_anti_spam_no_external_links(self) -> None:
+        """
+        Anti-Spam Meta: 100% mẫu câu trong COMMENT_REPLIES KHÔNG ĐƯỢC CHỨA bất kỳ link web nào!
+        Thuật toán kiểm duyệt của Meta sẽ tự động ẩn comment nếu câu trả lời công khai chứa URL.
+        """
+        forbidden_patterns = ["http://", "https://", "dan86.vn", "www.", ".vn", ".com"]
+        forbidden_phones = ["0933", "hotline", "zalo", "sđt", "số điện thoại"]
+
+        self.assertGreaterEqual(len(COMMENT_REPLIES), 8, "Cần tối thiểu 8-10 mẫu câu trả lời bình luận.")
+        for idx, tmpl in enumerate(COMMENT_REPLIES):
+            lower_tmpl = tmpl.lower()
+            for pattern in forbidden_patterns:
+                self.assertNotIn(
+                    pattern,
+                    lower_tmpl,
+                    f"COMMENT_REPLIES[{idx}] vi phạm Anti-Spam (chứa link '{pattern}'): {tmpl}",
+                )
+            for phone in forbidden_phones:
+                self.assertNotIn(
+                    phone,
+                    lower_tmpl,
+                    f"COMMENT_REPLIES[{idx}] chứa thông tin liên hệ cấm '{phone}': {tmpl}",
+                )
+            self.assertIn("{name}", tmpl, f"COMMENT_REPLIES[{idx}] thiếu placeholder {{name}}")
+            formatted = tmpl.format(name="Chị Nga")
+            self.assertIn("Chị Nga", formatted)
+            self.assertNotIn("{name}", formatted)
 
 
 if __name__ == "__main__":

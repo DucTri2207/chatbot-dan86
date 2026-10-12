@@ -192,16 +192,19 @@ MAX_THREADS_PER_CYCLE = 30                # Số hội thoại tối đa kiểm 
 
 # ==============================================================================
 # 1. MẪU CÂU TRẢ LỜI BÌNH LUẬN CÔNG KHAI (RANDOM XOAY VÒNG - REP 1 LẦN DUY NHẤT)
+# TUYỆT ĐỐI KHÔNG CHỨA LINK/URL/SĐT ĐỂ TRÁNH META KIỂM DUYỆT TỰ ĐỘNG ẨN COMMENT
 # ==============================================================================
 COMMENT_REPLIES: List[str] = [
-    "Dạ chào {name}, DAN86 đã gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư/tin nhắn chờ hoặc ghé xem thêm tại https://dan86.vn giúp shop nhé! ❤️",
-    "Dạ shop chào {name} ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Mời bạn check inbox hoặc xem các mẫu quà tại website https://dan86.vn nha! ✨",
-    "Dạ cảm ơn {name} đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động inbox tư vấn cho mình rồi ạ. Bạn có thể tham khảo thêm nhiều mẫu đẹp tại https://dan86.vn nhé! 🎁",
-    "Dạ chào {name}! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Bạn có thể xem trọn bộ set quà tại website: https://dan86.vn nhé! 🌾",
-    "Dạ chào {name}, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger hoặc truy cập https://dan86.vn để xem đầy đủ các set quà thuần Việt bên em nhé! 🌿",
-    "Dạ cảm ơn {name} đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ. Mời bạn ghé xem thêm sản phẩm tại https://dan86.vn nha! 🌸",
-    "Dạ chào {name} ạ, shop đã inbox trực tiếp thông tin các set quà thuần Việt cho mình rồi nhé. Bạn kiểm tra mục tin nhắn hoặc tham khảo bộ sưu tập tại https://dan86.vn giúp shop ạ! 💖",
-    "Dạ DAN86 xin chào {name}! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư hoặc xem trực tiếp tại https://dan86.vn nhé! 🎋",
+    "Dạ chào {name}, DAN86 đã chủ động gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư hoặc tin nhắn chờ giúp shop nhé! ❤️",
+    "Dạ shop chào {name} ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Mời bạn kiểm tra hộp thư để shop hỗ trợ mình chu đáo nhất nha! ✨",
+    "Dạ cảm ơn {name} đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động gửi tin nhắn kèm hình ảnh thực tế cho mình rồi ạ. Bạn check hộp thư/tin nhắn chờ giúp shop nhé! 🎁",
+    "Dạ chào {name}! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Bạn kiểm tra mục tin nhắn chờ để xem thông tin chi tiết nha! 🌾",
+    "Dạ chào {name}, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger hoặc tin nhắn chờ để bên em tư vấn set quà phù hợp nhất cho mình nhé! 🌿",
+    "Dạ cảm ơn {name} đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ. Bạn ghé kiểm tra tin nhắn giúp shop nha! ✨",
+    "Dạ chào {name} ạ, shop đã gửi trực tiếp thông tin các set quà thuần Việt vào tin nhắn cho mình rồi nhé. Bạn kiểm tra mục tin nhắn chờ giúp shop để được hỗ trợ liền ạ! ❤️",
+    "Dạ DAN86 xin chào {name}! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư để shop tư vấn nhanh nhất cho mình nhé! 🎁",
+    "Dạ chào {name}, DAN86 đã nhắn tin riêng tư vấn mẫu quà tặng và ưu đãi cho mình rồi ạ. Mời bạn kiểm tra hộp thư hoặc mục tin nhắn chờ nhé! 🌾",
+    "Dạ shop chào {name} ạ! Chi tiết các set quà thuần Việt đã được gửi tới tin nhắn riêng của bạn. Bạn kiểm tra hộp thư để DAN86 hỗ trợ bạn ngay nha! 🌿",
 ]
 
 # ==============================================================================

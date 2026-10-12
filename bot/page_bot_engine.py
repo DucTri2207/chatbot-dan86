@@ -187,6 +187,37 @@ async def human_sleep(min_sec: float = 1.5, max_sec: float = 3.5) -> None:
     await asyncio.sleep(random.uniform(min_sec, max_sec))
 
 
+async def is_dangerous_hide_button(element: Any) -> bool:
+    """
+    Bộ lọc phòng thủ cấp cao: Tuyệt đối không bao giờ click vào nút 'Ẩn' / 'Hide' bình luận.
+    Nếu bất kỳ nút nào có text, aria-label, hoặc title chứa 'ẩn', 'hide', 'ẩn bình luận', 'hide comment',
+    tuyệt đối bỏ qua, không được click!
+    """
+    if element is None:
+        return False
+    try:
+        eval_fn = getattr(element, "evaluate", None)
+        if callable(eval_fn):
+            raw = await element.evaluate("""el => {
+                const t = (el.innerText || '').trim().toLowerCase();
+                const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+                const title = (el.getAttribute('title') || '').trim().toLowerCase();
+                return t + ' ' + a + ' ' + title;
+            }""")
+            check_str = (raw or "").lower()
+            if not check_str:
+                return False
+            bad_phrases = ["ẩn bình luận", "hide comment", "ẩn phản hồi", "hide reply", "hide this comment"]
+            if any(b in check_str for b in bad_phrases):
+                return True
+            tokens = re.split(r'[\s\.,;:\-_/|]+', check_str)
+            if "ẩn" in tokens or "hide" in tokens:
+                return True
+    except Exception:
+        pass
+    return False
+
+
 async def safe_click(
     locator: Locator,
     timeout: int = 2500,
@@ -194,9 +225,10 @@ async def safe_click(
 ) -> bool:
     """
     Thực hiện nhấp chuột an toàn chống lỗi pointer-events interception:
-    1. Cuộn phần tử vào tầm nhìn (scroll_into_view_if_needed).
-    2. Thử nhấp bằng Playwright với force=True và timeout quy định.
-    3. Nếu gặp ngoại lệ / timeout (do bị phần tử khác che phủ / subtree intercepts pointer events),
+    1. Kiểm tra phòng thủ: Tuyệt đối không bấm nút Ẩn/Hide bình luận.
+    2. Cuộn phần tử vào tầm nhìn (scroll_into_view_if_needed).
+    3. Thử nhấp bằng Playwright với force=True và timeout quy định.
+    4. Nếu gặp ngoại lệ / timeout (do bị phần tử khác che phủ / subtree intercepts pointer events),
        bắt ngoại lệ, ghi log cảnh báo và kích hoạt synthetic click bằng JavaScript DOM.
     """
     try:
@@ -532,10 +564,12 @@ def is_page_author_name(text: str) -> bool:
 async def verify_logged_in(page: Page) -> bool:
     """
     Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa.
-    Tự động xử lý nút bấm đăng nhập một chạm 'Tiếp tục bằng Facebook' / 'Tiếp tục dưới tên Đức Trí'
+    Tự động xử lý nút bấm đăng nhập một chạm 'Tiếp tục bằng Facebook' / 'Tiếp tục dưới tên...'
     nếu Meta Business Suite đang ở màn hình chuyển giao phiên (SSO bridge).
-    Hoàn toàn chống deadlock, không chờ vô ích khi popup yêu cầu mật khẩu thủ công,
-    và nhận diện chính xác giao diện Hộp thư/Bình luận của MBS ngay cả khi URL có query params chứa 'login'.
+    - Xử lý song song: Chờ popup HOẶC chờ trang chính tự chuyển hướng trực tiếp (tránh timeout trên headless VPS).
+    - Thoát khỏi định kiến cứng ngắc: Chấp nhận cả /latest/notifications, /latest/home, /latest/inbox.
+    - Kích hoạt phiên: Nếu kẹt loginpage nhưng đã có cookies Facebook, điều hướng qua facebook.com
+      để đồng bộ session giữa hai domain.
     """
     import urllib.parse
 
@@ -550,7 +584,7 @@ async def verify_logged_in(page: Page) -> bool:
     except Exception:
         pass
 
-    inbox_indicators = [
+    mbs_indicators = [
         '[data-pagelet*="ThreadList"]',
         'div._a6ag._a6ah',
         'div[role="presentation"].x1ypdohk',
@@ -558,17 +592,31 @@ async def verify_logged_in(page: Page) -> bool:
         'div:has-text("Tất cả tin nhắn")',
         'div:has-text("Hộp thư")',
         '[data-dan86-notif-idx]',
+        '[data-pagelet*="Notifications"]',
+        'div:has-text("Thông báo")',
+        '[aria-label*="Thông báo"]',
+        '[aria-label*="Hộp thư"]',
+        'div:has-text("Trang chủ")',
+        'div:has-text("Meta Business Suite")',
     ]
 
-    # Nếu KHÔNG ở màn hình đăng nhập, kiểm tra nhanh giao diện Hộp thư / Thông báo MBS
+    # Nếu KHÔNG ở màn hình đăng nhập và không có login form:
     if not is_at_loginpage and not has_login_form:
-        for ind in inbox_indicators:
+        for ind in mbs_indicators:
             try:
                 loc = page.locator(ind).first
                 if await loc.count() > 0 and await loc.is_visible():
                     return True
             except Exception:
                 pass
+        # Nếu URL đã nằm trên các trang quản trị hợp lệ của Meta Business Suite (/latest/...)
+        if (
+            path.startswith("/latest/")
+            or "/latest/notifications" in path
+            or "/latest/home" in path
+            or "/latest/inbox" in path
+        ):
+            return True
     elif has_login_form and not is_at_loginpage:
         # Trang thường chứa form login -> Chưa đăng nhập
         return False
@@ -587,6 +635,7 @@ async def verify_logged_in(page: Page) -> bool:
             'div:has-text("Log in with Facebook")',
             'button:has-text("Log in with Facebook")',
             'a:has-text("Log in with Facebook")',
+            'div[role="button"]:has-text("Log in with Facebook")',
         ]
 
         clicked = False
@@ -603,83 +652,108 @@ async def verify_logged_in(page: Page) -> bool:
                 page.context.on("page", on_sso_page)
                 try:
                     await loc.click(timeout=5000, force=True)
-                    try:
-                        popup = await asyncio.wait_for(popup_future, timeout=6.0)
-                        await popup.wait_for_load_state("domcontentloaded")
-                        await asyncio.sleep(0.5)
+                    clicked = True
 
-                        # Bấm nút 'Tiếp tục' trong popup
-                        p_btn = popup.locator(
-                            'div[role="button"]:has-text("Tiếp tục"), '
-                            'button:has-text("Tiếp tục"), '
-                            'div:has-text("Tiếp tục"), '
-                            'a:has-text("Tiếp tục"), '
-                            '[aria-label*="Tiếp tục"], '
-                            'button[name="__CONFIRM__"], '
-                            'div[role="button"]:has-text("Continue"), '
-                            'button:has-text("Continue")'
-                        ).first
-                        if await p_btn.count() > 0:
-                            await p_btn.click(force=True)
-                        else:
-                            txt_loc = popup.locator('text="Tiếp tục"').first
-                            if await txt_loc.count() > 0:
-                                await txt_loc.click(force=True)
+                    # XỬ LÝ SONG SONG: Chờ popup HOẶC chờ trang chính chuyển hướng (tránh timeout vô ích trên Headless VPS)
+                    async def wait_popup():
+                        return await popup_future
 
-                        await asyncio.sleep(0.5)
-                        # Kiểm tra xem popup có đòi mật khẩu thủ công không
-                        if not popup.is_closed():
-                            pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
-                            if pass_count > 0:
-                                logger.warning("Popup SSO yêu cầu nhập mật khẩu thủ công (chưa có token một chạm hoạt động). Đóng popup để không chặn vòng quét.")
-                                try:
-                                    await popup.close()
-                                except Exception:
-                                    pass
-                                sso_success = False
+                    async def watch_main_page_nav():
+                        for _ in range(12):  # Chờ tối đa 6.0 giây, kiểm tra mỗi 0.5s
+                            await asyncio.sleep(0.5)
+                            c_p = urllib.parse.urlparse(page.url).path.lower()
+                            if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
+                                return True
+                        return False
+
+                    popup_task = asyncio.create_task(wait_popup())
+                    redirect_task = asyncio.create_task(watch_main_page_nav())
+
+                    done, pending = await asyncio.wait(
+                        [popup_task, redirect_task],
+                        timeout=7.0,
+                        return_when=asyncio.FIRST_COMPLETED,
+                    )
+
+                    for p in pending:
+                        p.cancel()
+
+                    if popup_task in done and not popup_task.cancelled() and popup_task.exception() is None:
+                        try:
+                            popup = popup_task.result()
+                            load_state_fn = getattr(popup, "wait_for_load_state", None)
+                            if callable(load_state_fn):
+                                ls_res = load_state_fn("domcontentloaded")
+                                if asyncio.iscoroutine(ls_res) or hasattr(ls_res, "__await__"):
+                                    await ls_res
+                            await asyncio.sleep(0.3)
+
+                            # Bấm nút 'Tiếp tục' trong popup
+                            p_btn = popup.locator(
+                                'div[role="button"]:has-text("Tiếp tục"), '
+                                'button:has-text("Tiếp tục"), '
+                                'div:has-text("Tiếp tục"), '
+                                'a:has-text("Tiếp tục"), '
+                                '[aria-label*="Tiếp tục"], '
+                                'button[name="__CONFIRM__"], '
+                                'div[role="button"]:has-text("Continue"), '
+                                'button:has-text("Continue")'
+                            ).first
+                            p_count = await p_btn.count() if hasattr(p_btn, "count") else 0
+                            if p_count > 0:
+                                await p_btn.click(force=True)
                             else:
-                                # Chờ tối đa 6s cho popup tự đóng hoặc chuyển hướng
-                                try:
-                                    await popup.wait_for_event("close", timeout=6000)
-                                    sso_success = True
-                                except Exception:
-                                    if not popup.is_closed():
-                                        pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
-                                        if pass_count > 0:
-                                            sso_success = False
+                                txt_loc = popup.locator('text="Tiếp tục"').first
+                                if hasattr(txt_loc, "count") and await txt_loc.count() > 0:
+                                    await txt_loc.click(force=True)
+
+                            await asyncio.sleep(0.3)
+                            # Kiểm tra xem popup có đòi mật khẩu thủ công không
+                            is_cl = getattr(popup, "is_closed", lambda: False)()
+                            if not is_cl:
+                                pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                                if pass_count > 0:
+                                    logger.warning("Popup SSO yêu cầu nhập mật khẩu thủ công (chưa có token một chạm hoạt động). Đóng popup để không chặn vòng quét.")
+                                    try:
+                                        await popup.close()
+                                    except Exception:
+                                        pass
+                                    sso_success = False
+                                else:
+                                    # Chờ tối đa 6s cho popup tự đóng hoặc chuyển hướng
+                                    try:
+                                        await popup.wait_for_event("close", timeout=6000)
+                                        sso_success = True
+                                    except Exception:
+                                        if not getattr(popup, "is_closed", lambda: False)():
+                                            pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                                            sso_success = (pass_count == 0)
+                                            try:
+                                                await popup.close()
+                                            except Exception:
+                                                pass
                                         else:
                                             sso_success = True
-                                        try:
-                                            await popup.close()
-                                        except Exception:
-                                            pass
-                                    else:
-                                        sso_success = True
-                    except Exception as e_pop:
-                        logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
-                        # Kiểm tra xem chính tab hiện tại có đang tự chuyển hướng không (direct navigation)
-                        try:
-                            await page.wait_for_load_state("domcontentloaded", timeout=3000)
-                        except Exception:
-                            pass
-                        cur_p = urllib.parse.urlparse(page.url).path.lower()
-                        if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
+                        except Exception as e_pop:
+                            logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
+
+                    elif redirect_task in done and not redirect_task.cancelled() and redirect_task.exception() is None:
+                        if redirect_task.result():
                             logger.info("Trang chính đã tự chuyển hướng thành công mà không cần popup: %s", page.url[:80])
                             sso_success = True
-                    finally:
-                        try:
-                            page.context.remove_listener("page", on_sso_page)
-                        except Exception:
-                            pass
 
-                    clicked = True
-                    break
                 except Exception as e_click:
                     logger.debug("Lỗi bấm nút SSO: %s", e_click)
+                finally:
                     try:
                         page.context.remove_listener("page", on_sso_page)
                     except Exception:
                         pass
+
+                cur_p = urllib.parse.urlparse(page.url).path.lower()
+                if "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p:
+                    sso_success = True
+                break
 
         if clicked and sso_success:
             # Chờ trang chính tự chuyển hướng hoặc chủ động điều hướng tới URL inbox mục tiêu
@@ -692,16 +766,51 @@ async def verify_logged_in(page: Page) -> bool:
                 cur_p = urllib.parse.urlparse(page.url).path.lower()
                 if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
                     await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
-                await human_sleep(2.0, 3.5)
+                await human_sleep(1.0, 2.0)
             except Exception as e_nav:
                 logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
-        elif clicked and not sso_success:
-            # Kiểm tra phòng vệ cuối cùng xem trang chính có tự về inbox không
-            cur_p = urllib.parse.urlparse(page.url).path.lower()
-            if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
-                pass
-            else:
-                return False
+
+        # BỔ SUNG CƠ CHẾ KÍCH HOẠT PHIÊN:
+        # Nếu bị kẹt tại loginpage dù cookie Facebook đã có, điều hướng qua https://www.facebook.com/
+        # rồi quay lại META_INBOX_COMMENTS_URL để cookies đồng bộ giữa hai domain.
+        cur_p = urllib.parse.urlparse(page.url).path.lower()
+        if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+            try:
+                cookies_fn = getattr(page.context, "cookies", None)
+                cookies = []
+                if callable(cookies_fn):
+                    c_res = cookies_fn()
+                    if asyncio.iscoroutine(c_res) or hasattr(c_res, "__await__"):
+                        cookies = await c_res
+                    elif isinstance(c_res, list):
+                        cookies = c_res
+                has_fb_auth_cookie = any(c.get("name") in ("c_user", "xs") for c in cookies if isinstance(c, dict))
+                if has_fb_auth_cookie:
+                    logger.info("Phát hiện cookies Facebook (c_user/xs) hợp lệ nhưng Meta Business Suite kẹt tại loginpage. Kích hoạt bắc cầu phiên: Truy cập facebook.com để đồng bộ...")
+                    try:
+                        await page.goto("https://www.facebook.com/", wait_until="domcontentloaded", timeout=30000)
+                        await human_sleep(1.5, 2.5)
+                        logger.info("Đã đồng bộ session Facebook.com. Điều hướng lại về Meta Business Suite: %s", META_INBOX_COMMENTS_URL)
+                        await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+                        await human_sleep(2.0, 3.5)
+                    except Exception as e_sync:
+                        logger.warning("Lỗi kích hoạt bắc cầu session facebook.com: %s", e_sync)
+
+                    cur_p = urllib.parse.urlparse(page.url).path.lower()
+                    if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+                        for sel in sso_selectors:
+                            loc = page.locator(sel).first
+                            if await loc.count() > 0 and await loc.is_visible():
+                                logger.info("Bấm nút SSO lần 2 sau khi đồng bộ session: %s", sel)
+                                await loc.click(timeout=5000, force=True)
+                                await human_sleep(2.0, 3.5)
+                                break
+            except Exception as e_auth_check:
+                logger.debug("Lỗi kiểm tra auth cookies: %s", e_auth_check)
+
+        cur_p = urllib.parse.urlparse(page.url).path.lower()
+        if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+            return False
 
     # Đánh giá lại trạng thái sau chuyển hướng
     parsed = urllib.parse.urlparse(page.url)
@@ -712,20 +821,26 @@ async def verify_logged_in(page: Page) -> bool:
     if "/business/loginpage" in path or path.startswith("/login"):
         return False
 
-    # Kiểm tra xác nhận lần cuối qua sự tồn tại của UI Hộp thư
-    for ind in inbox_indicators:
+    # Kiểm tra xác nhận lần cuối qua sự tồn tại của UI Hộp thư / Thông báo MBS
+    for ind in mbs_indicators:
         try:
             if await page.locator(ind).first.count() > 0:
                 break
         except Exception:
             pass
     else:
-        # Nếu không có bất kỳ chỉ báo Hộp thư nào:
+        # Nếu không có bất kỳ chỉ báo MBS nào:
         # 1. Nếu có form đăng nhập: chắc chắn chưa đăng nhập
-        if await page.locator('input[name="email"], input[name="pass"]').count() > 0:
+        if await page.locator('input[name="email"], input[name="pass"], input[type="password"]').count() > 0:
             return False
-        # 2. Nếu URL không phải là trang inbox của Meta: không xác nhận thành công bừa bãi
-        if "/latest/inbox" not in path:
+        # 2. Xóa bỏ điều kiện cứng ngắc "/latest/inbox not in path":
+        # Cho phép cả các trang của Meta Business Suite (/latest/notifications, /latest/home, /latest/inbox, /latest/*)
+        # đều hợp lệ khi không có form login
+        is_valid_mbs_path = (
+            path.startswith("/latest/")
+            or "/latest/" in path
+        )
+        if not is_valid_mbs_path:
             return False
 
     # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
@@ -904,13 +1019,14 @@ async def expand_all_comment_replies(page: Page) -> int:
                 btn = btns.nth(idx)
                 if await btn.is_visible():
                     txt = (await btn.inner_text() or "").strip().lower()
-                    if any(k in txt for k in ["xem", "view"]):
-                        try:
-                            await btn.click(timeout=1500)
-                            expanded_count += 1
-                            await asyncio.sleep(0.5)
-                        except Exception:
-                            pass
+                    if any(k in txt for k in ["xem", "view"]) and not any(bad in txt for bad in ["ẩn", "hide"]):
+                        if not await is_dangerous_hide_button(btn):
+                            try:
+                                await btn.click(timeout=1500)
+                                expanded_count += 1
+                                await asyncio.sleep(0.5)
+                            except Exception:
+                                pass
         if expanded_count > 0:
             await human_sleep(1.0, 2.0)
     except Exception as e:
@@ -984,7 +1100,8 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         const isReplyBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-            const combo = (t + ' ' + a).trim();
+            const title = (el.getAttribute('title') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a + ' ' + title).trim();
             if (combo.includes('xem') || combo.includes('ẩn') || combo.includes('view') || combo.includes('hide')) {
                 return false;
             }
@@ -997,7 +1114,11 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         const isMsgBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-            const combo = t + ' ' + a;
+            const title = (el.getAttribute('title') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a + ' ' + title).trim();
+            if (combo.includes('ẩn') || combo.includes('hide')) {
+                return false;
+            }
             return combo.includes('see chat') || combo.includes('gửi tin nhắn') ||
                    combo.includes('nhắn tin') || combo.includes('send message') ||
                    combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
@@ -1207,17 +1328,23 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             const rBtn = candidateEls.find(isReplyBtn);
             if (rBtn) {
                 const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
-                const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '')).toLowerCase();
-                if (!clickCombo.includes('xem') && !clickCombo.includes('ẩn') && !clickCombo.includes('view') && !clickCombo.includes('hide')) {
-                    clickNode.setAttribute('data-dan86-reply-btn', 'true');
-                } else {
-                    rBtn.setAttribute('data-dan86-reply-btn', 'true');
+                const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '') + ' ' + (clickNode.getAttribute('title') || '')).toLowerCase();
+                const rCombo = ((rBtn.innerText || '') + ' ' + (rBtn.getAttribute('aria-label') || '') + ' ' + (rBtn.getAttribute('title') || '')).toLowerCase();
+                if (!clickCombo.includes('ẩn') && !clickCombo.includes('hide') && !rCombo.includes('ẩn') && !rCombo.includes('hide')) {
+                    if (!clickCombo.includes('xem') && !clickCombo.includes('view')) {
+                        clickNode.setAttribute('data-dan86-reply-btn', 'true');
+                    } else if (!rCombo.includes('xem') && !rCombo.includes('view')) {
+                        rBtn.setAttribute('data-dan86-reply-btn', 'true');
+                    }
                 }
             }
             const mBtn = candidateEls.find(isMsgBtn);
             if (mBtn) {
                 const msgNode = mBtn.closest('button, [role="button"], a') || mBtn;
-                msgNode.setAttribute('data-dan86-msg-btn', 'true');
+                const mCombo = ((msgNode.innerText || '') + ' ' + (msgNode.getAttribute('aria-label') || '') + ' ' + (msgNode.getAttribute('title') || '')).toLowerCase();
+                if (!mCombo.includes('ẩn') && !mCombo.includes('hide')) {
+                    msgNode.setAttribute('data-dan86-msg-btn', 'true');
+                }
             }
         }
 
@@ -1318,7 +1445,8 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
         const isReplyBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-            const combo = (t + ' ' + a).trim();
+            const title = (el.getAttribute('title') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a + ' ' + title).trim();
             if (combo.includes('xem') || combo.includes('ẩn') || combo.includes('view') || combo.includes('hide')) {
                 return false;
             }
@@ -1331,7 +1459,11 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
         const isMsgBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-            const combo = t + ' ' + a;
+            const title = (el.getAttribute('title') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a + ' ' + title).trim();
+            if (combo.includes('ẩn') || combo.includes('hide')) {
+                return false;
+            }
             return combo.includes('see chat') || combo.includes('gửi tin nhắn') ||
                    combo.includes('nhắn tin') || combo.includes('send message') ||
                    combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
@@ -1341,18 +1473,24 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
         const rBtn = candidateEls.find(isReplyBtn);
         if (rBtn) {
             const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
-            const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '')).toLowerCase();
-            if (!clickCombo.includes('xem') && !clickCombo.includes('ẩn') && !clickCombo.includes('view') && !clickCombo.includes('hide')) {
-                clickNode.setAttribute('data-dan86-reply-btn', 'true');
-            } else {
-                rBtn.setAttribute('data-dan86-reply-btn', 'true');
+            const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '') + ' ' + (clickNode.getAttribute('title') || '')).toLowerCase();
+            const rCombo = ((rBtn.innerText || '') + ' ' + (rBtn.getAttribute('aria-label') || '') + ' ' + (rBtn.getAttribute('title') || '')).toLowerCase();
+            if (!clickCombo.includes('ẩn') && !clickCombo.includes('hide') && !rCombo.includes('ẩn') && !rCombo.includes('hide')) {
+                if (!clickCombo.includes('xem') && !clickCombo.includes('view')) {
+                    clickNode.setAttribute('data-dan86-reply-btn', 'true');
+                } else if (!rCombo.includes('xem') && !rCombo.includes('view')) {
+                    rBtn.setAttribute('data-dan86-reply-btn', 'true');
+                }
             }
         }
 
         const mBtn = candidateEls.find(isMsgBtn);
         if (mBtn) {
             const msgNode = mBtn.closest('button, [role="button"], a') || mBtn;
-            msgNode.setAttribute('data-dan86-msg-btn', 'true');
+            const mCombo = ((msgNode.innerText || '') + ' ' + (msgNode.getAttribute('aria-label') || '') + ' ' + (msgNode.getAttribute('title') || '')).toLowerCase();
+            if (!mCombo.includes('ẩn') && !mCombo.includes('hide')) {
+                msgNode.setAttribute('data-dan86-msg-btn', 'true');
+            }
         }
 
         return true;
@@ -1574,7 +1712,11 @@ async def send_private_inbox_to_commenter(
             const isMsgBtn = (el) => {
                 const t = (el.innerText || '').trim().toLowerCase();
                 const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
-                const combo = t + ' ' + a;
+                const title = (el.getAttribute('title') || '').trim().toLowerCase();
+                const combo = (t + ' ' + a + ' ' + title).trim();
+                if (combo.includes('ẩn') || combo.includes('hide')) {
+                    return false;
+                }
                 return combo.includes('see chat') || combo.includes('gửi tin nhắn') ||
                        combo.includes('nhắn tin') || combo.includes('send message') ||
                        combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
@@ -1587,6 +1729,10 @@ async def send_private_inbox_to_commenter(
             const btn = candidateEls.find(isMsgBtn);
             if (btn) {
                 const clickNode = btn.closest('button, [role="button"], a') || btn;
+                const nodeCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '') + ' ' + (clickNode.getAttribute('title') || '')).toLowerCase();
+                if (nodeCombo.includes('ẩn') || nodeCombo.includes('hide')) {
+                    return { clicked: false, tagged: false, text: '' };
+                }
                 clickNode.scrollIntoView();
                 clickNode.setAttribute('data-dan86-msg-btn', 'true');
                 const r = clickNode.getBoundingClientRect();
@@ -2217,8 +2363,11 @@ async def process_post_comments_by_coordinates(
                     continue
                 b_text = (await b_el.inner_text() or "").strip().lower()
                 b_aria = (await b_el.get_attribute("aria-label") or "").strip().lower()
-                b_combo = f"{b_text} {b_aria}"
+                b_title = (await b_el.get_attribute("title") or "").strip().lower()
+                b_combo = f"{b_text} {b_aria} {b_title}"
                 if any(bad in b_combo for bad in ["xem", "ẩn", "view", "hide"]):
+                    continue
+                if await is_dangerous_hide_button(b_el):
                     continue
                 if (
                     b_text in ["trả lời", "reply", "phản hồi"]
