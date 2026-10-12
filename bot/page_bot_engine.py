@@ -1107,6 +1107,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 authorName: authorName || "bạn",
                 commentText: commentText,
                 hasReplyBtn: !!rBtn,
+                hasMsgBtn: !!mBtn,
                 msgBtnText: mBtn ? ((mBtn.innerText || '').trim() || (mBtn.getAttribute('aria-label') || '').trim()) : "",
                 innerPreview: inner.slice(0, 100),
                 articleEl: art,
@@ -1114,6 +1115,10 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 top: rect.top
             });
         }
+
+        const minLeft = parsedComments.length > 0
+            ? Math.min(...parsedComments.map(c => c.left))
+            : 0;
 
         // Đánh giá xem bình luận nào có phản hồi của Page lồng ngay bên dưới
         for (let j = 0; j < parsedComments.length; j++) {
@@ -1123,20 +1128,31 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 continue;
             }
 
+            const isItemRoot = item.left <= minLeft + 15;
             let hasReplyBelow = false;
-            // Chỉ coi article tiếp theo là phản hồi của item này nếu:
-            // 1. Article tiếp theo là của Page (isPageReply == true)
-            // VÀ 2. Article tiếp theo PHẢI THỤT LỀ (nested reply): nextItem.left > item.left + 15!
-            // Nếu nextItem.left <= item.left + 10, đó là bình luận cấp 1 tiếp theo -> kết thúc nhánh
+
             for (let k = j + 1; k < parsedComments.length; k++) {
                 const nextItem = parsedComments[k];
-                if (nextItem.left <= item.left + 10) {
-                    // Đã chạm đến bình luận cấp 1 tiếp theo -> kết thúc nhánh phản hồi
-                    break;
-                }
-                if (nextItem.left > item.left + 15 && nextItem.isPageReply) {
-                    hasReplyBelow = true;
-                    break;
+                if (isItemRoot) {
+                    // Bình luận gốc cấp 1: nếu nextItem có cùng lề gốc (<= item.left + 15) -> kết thúc nhánh
+                    if (nextItem.left <= item.left + 15) {
+                        break;
+                    }
+                    if (nextItem.left > item.left + 15 && nextItem.isPageReply) {
+                        hasReplyBelow = true;
+                        break;
+                    }
+                } else {
+                    // Bình luận lồng cấp 2+ (nested reply):
+                    // Nếu nextItem lùi ra ngoài lề gốc/cấp cha (< item.left - 15) -> kết thúc nhánh
+                    if (nextItem.left < item.left - 15) {
+                        break;
+                    }
+                    // Trong cùng nhánh: nếu article tiếp theo là của Page -> đã được phản hồi
+                    if (nextItem.isPageReply) {
+                        hasReplyBelow = true;
+                        break;
+                    }
                 }
             }
             item.hasPageReply = hasReplyBelow;
@@ -1433,14 +1449,31 @@ async def send_inbox_via_messenger_search(
 
 
 async def dismiss_blocking_modals(page: Page) -> None:
-    """Tự động đóng các popup modal / upsell / banner quảng cáo che khuất giao diện (chỉ đóng bên trong dialog đang hiển thị, tuyệt đối không bấm nút trên trang chính)."""
+    """Tự động đóng các popup modal / upsell / banner quảng cáo che khuất giao diện (chỉ đóng bên trong dialog đang hiển thị, tuyệt đối không bấm nút trên trang chính và không đóng dialog soạn tin nhắn riêng)."""
     try:
         dialogs = page.locator('div[role="dialog"]')
         cnt = await dialogs.count()
         for i in range(cnt):
             dlg = dialogs.nth(i)
             if await dlg.is_visible():
-                close_btn = dlg.locator('[aria-label="Đóng"], [aria-label="Close"]').first
+                # SAFETY CHECK: Tuyệt đối không đóng dialog nếu đó là popup soạn tin nhắn riêng!
+                composer = dlg.locator('div[role="textbox"], textarea').first
+                if await composer.count() > 0 and await composer.is_visible():
+                    aria = (await composer.get_attribute("aria-label") or "").lower()
+                    holder = (await composer.get_attribute("placeholder") or "").lower()
+                    if any(k in aria or k in holder for k in ["tin nhắn", "message", "chat"]):
+                        continue
+
+                close_btn = dlg.locator(
+                    '[aria-label*="Đóng"], [aria-label*="Close"], '
+                    '[aria-label*="Dismiss"], [aria-label*="Bỏ qua"], '
+                    'button:has-text("Đóng"), button:has-text("Close"), '
+                    'div[role="button"]:has-text("Đóng"), div[role="button"]:has-text("Close"), '
+                    'button:has-text("Không phải bây giờ"), button:has-text("Not now"), '
+                    'button:has-text("Để sau"), button:has-text("Lúc khác"), '
+                    'div[role="button"]:has-text("Không phải bây giờ"), div[role="button"]:has-text("Not now"), '
+                    'div[role="button"]:has-text("Để sau"), div[role="button"]:has-text("Lúc khác")'
+                ).first
                 if await close_btn.count() > 0 and await close_btn.is_visible():
                     await close_btn.click(timeout=1000)
                     await asyncio.sleep(0.3)
@@ -1765,36 +1798,42 @@ async def locate_nested_reply_box(
 
     start_time = time.time()
     while time.time() - start_time < timeout_seconds:
-        # Ưu tiên 1A: Ô textbox nằm ngay sau target_art (following XPath)
+        # Ưu tiên 1: Element đang :focus (document.activeElement) có quan hệ hình học sát target_art
+        # Khi click Trả lời, Facebook tự động focus vào ô nhập vừa bung ra
+        focused_el = page.locator('div[role="textbox"]:focus, div[contenteditable="true"]:focus, :focus').first
+        if await is_valid_nested_candidate(focused_el):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: :focus activeElement).")
+            return focused_el
+
+        # Ưu tiên 2: Ô textbox nằm ngay sau target_art (following XPath 1 & 2)
         following_box = target_art.locator('xpath=following::div[@role="textbox"][1]').first
         if await is_valid_nested_candidate(following_box):
-            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: following role=textbox).")
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 2: following role=textbox).")
             return following_box
 
         following_edit = target_art.locator('xpath=following::div[@contenteditable="true"][1]').first
         if await is_valid_nested_candidate(following_edit):
-            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: following contenteditable).")
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 2: following contenteditable).")
             return following_edit
 
-        # Ưu tiên 1B: Ô textbox nằm ngay bên trong target_art
+        following_box2 = target_art.locator('xpath=following::div[@role="textbox" or @contenteditable="true"][2]').first
+        if await is_valid_nested_candidate(following_box2):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 2: following #2).")
+            return following_box2
+
+        # Ưu tiên 3: Ô textbox nằm ngay bên trong target_art
         inside_box = target_art.locator('div[role="textbox"], div[contenteditable="true"]').first
         if await is_valid_nested_candidate(inside_box):
-            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: inside target_art).")
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 3: inside target_art).")
             return inside_box
 
-        # Ưu tiên 2: Element đang :focus (document.activeElement) có quan hệ hình học sát target_art
-        focused_el = page.locator('div[role="textbox"]:focus, div[contenteditable="true"]:focus, :focus').first
-        if await is_valid_nested_candidate(focused_el):
-            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 2: :focus activeElement).")
-            return focused_el
-
-        # Ưu tiên 3: Quét các textbox đang hiển thị nằm trong phạm vi hình học gần target_art
+        # Ưu tiên 4: Quét các textbox đang hiển thị nằm trong phạm vi hình học gần target_art
         near_boxes = page.locator('div[role="textbox"], div[contenteditable="true"]')
-        near_count = min(await near_boxes.count(), 10)
+        near_count = min(await near_boxes.count(), 30)
         for nb_idx in range(near_count):
             cand_nb = near_boxes.nth(nb_idx)
             if await is_valid_nested_candidate(cand_nb):
-                logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 3: near geometric match #%d).", nb_idx)
+                logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 4: near geometric match #%d).", nb_idx)
                 return cand_nb
 
         await asyncio.sleep(0.3)
@@ -2332,8 +2371,8 @@ async def process_facebook_notifications_tab(
                     logger.info("Chế độ thử nghiệm an toàn: Bỏ qua thông báo từ [%s] (Chỉ tương tác với Đức Trí).", author)
                     continue
 
-            # Memory cooldown check
-            if memory.is_customer_in_cooldown(
+            # Memory cooldown check (chỉ áp dụng khi có snippet để tránh chặn oan thông báo bài viết khác khi chưa rõ nội dung)
+            if snippet and memory.is_customer_in_cooldown(
                 author,
                 cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
                 comment_text=snippet,
@@ -2366,14 +2405,35 @@ async def process_facebook_notifications_tab(
                 cnt = notif_loc.count()
                 if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
                     cnt = await cnt
-                if cnt == 0:
-                    # Nếu trang vừa được điều hướng/tải lại khiến attribute bị xóa:
-                    # Tái phân tích và đánh dấu lại DOM trang hiện tại
+
+                # Kiểm tra xem thẻ này có thực sự thuộc về author không (tránh lệch index sau khi reload)
+                is_correct_author = True
+                if cnt > 0 and author and author != "bạn":
+                    try:
+                        card_txt = (await notif_loc.inner_text() or "").lower()
+                        is_correct_author = author.lower() in card_txt
+                    except Exception:
+                        pass
+
+                if cnt == 0 or not is_correct_author:
+                    # Nếu trang vừa được điều hướng/tải lại khiến attribute bị xóa hoặc đổi thứ tự:
                     await inspect_notifications_list(page)
-                    notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
-                    cnt = notif_loc.count()
-                    if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
-                        cnt = await cnt
+                    # Ưu tiên tìm thẻ có chứa đúng tên tác giả mục tiêu
+                    if author and author != "bạn":
+                        author_card = page.locator(f'[data-dan86-notif-idx]:has-text("{author}")').first
+                        ac_cnt = author_card.count()
+                        if asyncio.iscoroutine(ac_cnt) or hasattr(ac_cnt, "__await__"):
+                            ac_cnt = await ac_cnt
+                        if ac_cnt > 0:
+                            notif_loc = author_card
+                            cnt = ac_cnt
+                            is_correct_author = True
+                    if cnt == 0:
+                        notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
+                        cnt = notif_loc.count()
+                        if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
+                            cnt = await cnt
+
                 if cnt > 0:
                     clicked_notif = await click_element_at_physical_coordinates(page, notif_loc, timeout_ms=3000)
             except Exception as e_loc:

@@ -774,10 +774,217 @@ class TestDomEvaluationRealBrowser(unittest.TestCase):
                 self.assertEqual(c_info["unreplied_count"], 1, "Chỉ nhận diện article có nút tương tác, bỏ qua article mô tả bài viết!")
                 self.assertEqual(c_info["author_name"], "Đức Trí")
 
+                # Test 4: Multi-level nested replies - khách bình luận cấp 2 lồng dưới phản hồi của Page, và Page đã phản hồi tiếp
+                html_multi_nested = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <!-- Root comment #1 của khách -->
+                  <div role="article" style="position: absolute; left: 350px; top: 100px; width: 600px; height: 80px;">
+                    <a role="link">Đức Trí</a>
+                    <div dir="auto">Cho em xin giá set này</div>
+                    <div role="button"><span>Trả lời</span></div>
+                    <div role="button"><span>Gửi tin nhắn</span></div>
+                  </div>
+                  <!-- Page reply #1 -->
+                  <div role="article" style="position: absolute; left: 390px; top: 200px; width: 550px; height: 80px;">
+                    <a role="link">Dần86Farm</a>
+                    <div dir="auto">Dạ 150k bạn nha</div>
+                    <div role="button"><span>Trả lời</span></div>
+                  </div>
+                  <!-- Khách phản hồi tiếp cấp 2 trong luồng (same indentation: 390px) -->
+                  <div role="article" style="position: absolute; left: 390px; top: 300px; width: 550px; height: 80px;">
+                    <a role="link">Đức Trí</a>
+                    <div dir="auto">Ship về Hà Nội bao nhiêu ạ?</div>
+                    <div role="button"><span>Trả lời</span></div>
+                    <div role="button"><span>Gửi tin nhắn</span></div>
+                  </div>
+                  <!-- Page reply #2 cho câu hỏi phụ của khách -->
+                  <div role="article" style="position: absolute; left: 390px; top: 400px; width: 550px; height: 80px;">
+                    <a role="link">Dần86Farm</a>
+                    <div dir="auto">Dạ phí ship 20k ạ</div>
+                    <div role="button"><span>Trả lời</span></div>
+                  </div>
+                </body>
+                </html>
+                """
+                await p_async.set_content(html_multi_nested)
+                multi_info = await inspect_comment_panel(p_async)
+                self.assertEqual(multi_info["total_comments"], 4)
+                # Cả 2 bình luận của khách đều đã có câu trả lời của Page (has_page_reply == True)
+                for uc in multi_info["unreplied_comments"]:
+                    self.assertTrue(uc["has_page_reply"], f"Bình luận '{uc['comment_text']}' phải nhận diện has_page_reply == True!")
+                    self.assertTrue(uc["has_msg_btn"], "has_msg_btn phải là boolean True!")
+
+                # Test 5: Multi-level nested reply CHƯA có phản hồi của Page
+                html_nested_unreplied = """
+                <!DOCTYPE html>
+                <html>
+                <body>
+                  <div role="article" style="position: absolute; left: 350px; top: 100px; width: 600px; height: 80px;">
+                    <a role="link">Đức Trí</a>
+                    <div dir="auto">Cho em xin giá set này</div>
+                    <div role="button"><span>Trả lời</span></div>
+                    <div role="button"><span>Gửi tin nhắn</span></div>
+                  </div>
+                  <div role="article" style="position: absolute; left: 390px; top: 200px; width: 550px; height: 80px;">
+                    <a role="link">Dần86Farm</a>
+                    <div dir="auto">Dạ 150k bạn nha</div>
+                    <div role="button"><span>Trả lời</span></div>
+                  </div>
+                  <!-- Khách hỏi tiếp nhưng Page CHƯA trả lời -->
+                  <div role="article" style="position: absolute; left: 390px; top: 300px; width: 550px; height: 80px;">
+                    <a role="link">Đức Trí</a>
+                    <div dir="auto">Còn hàng màu đỏ không shop?</div>
+                    <div role="button"><span>Trả lời</span></div>
+                    <div role="button"><span>Gửi tin nhắn</span></div>
+                  </div>
+                  <!-- Bình luận gốc của khách khác -->
+                  <div role="article" style="position: absolute; left: 350px; top: 400px; width: 600px; height: 80px;">
+                    <a role="link">Khách Hàng Khác</a>
+                    <div dir="auto">Sản phẩm đẹp quá</div>
+                    <div role="button"><span>Trả lời</span></div>
+                  </div>
+                </body>
+                </html>
+                """
+                await p_async.set_content(html_nested_unreplied)
+                unrep_info = await inspect_comment_panel(p_async)
+                target_nested = [c for c in unrep_info["unreplied_comments"] if "màu đỏ" in c["comment_text"]]
+                self.assertEqual(len(target_nested), 1)
+                self.assertFalse(target_nested[0]["has_page_reply"], "Câu hỏi phụ chưa trả lời phải có has_page_reply == False!")
+
                 await b.close()
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
             executor.submit(asyncio.run, run_async()).result()
+
+    def test_dismiss_blocking_modals_handles_various_labels_and_spares_composer(self):
+        async def run_test():
+            page = MagicMock()
+            # Modal 1: Upsell dialog với button "Không phải bây giờ"
+            btn_not_now = make_coord_mock_locator(inner_text_val="Không phải bây giờ")
+            composer_empty = make_coord_mock_locator(count_val=0, visible_val=False)
+            dlg1 = make_coord_mock_locator()
+            def dlg1_locator(sel):
+                if 'textbox' in sel:
+                    return composer_empty
+                return btn_not_now
+            dlg1.locator = MagicMock(side_effect=dlg1_locator)
+
+            # Modal 2: Private inbox dialog đang soạn tin nhắn -> TUYỆT ĐỐI KHÔNG ĐƯỢC ĐÓNG!
+            composer_chat = make_coord_mock_locator(count_val=1, visible_val=True, aria_val="Nhập tin nhắn riêng...")
+            btn_close = make_coord_mock_locator(aria_val="Đóng")
+            dlg2 = make_coord_mock_locator()
+            def dlg2_locator(sel):
+                if 'textbox' in sel:
+                    return composer_chat
+                return btn_close
+            dlg2.locator = MagicMock(side_effect=dlg2_locator)
+
+            all_dlgs = [dlg1, dlg2]
+            dialogs_mock = MagicMock()
+            dialogs_mock.count = AsyncMock(return_value=len(all_dlgs))
+            dialogs_mock.nth = MagicMock(side_effect=lambda idx: all_dlgs[idx])
+            page.locator = MagicMock(return_value=dialogs_mock)
+
+            from bot.page_bot_engine import dismiss_blocking_modals
+            await dismiss_blocking_modals(page)
+
+            # btn_not_now của dlg1 được bấm đóng
+            btn_not_now.click.assert_awaited()
+            # btn_close của dlg2 TUYỆT ĐỐI KHÔNG bị bấm vì dlg2 là composer chat!
+            btn_close.click.assert_not_awaited()
+
+        asyncio.run(run_test())
+
+    def test_notifications_without_snippet_not_blocked_by_cooldown_from_other_post(self):
+        async def run_test():
+            page = MagicMock()
+            page.url = META_NOTIFICATIONS_URL
+            page.goto = AsyncMock()
+            page.mouse = MagicMock()
+            page.mouse.click = AsyncMock()
+
+            # Khách vừa được rep bình luận trên bài viết khác 30 giây trước
+            mem = BotMemoryStore(memory_path=tempfile.NamedTemporaryFile().name)
+            mem.mark_comment_replied(
+                comment_key="cmt:post_old:0",
+                author_name="Đức Trí",
+                comment_text="Cho mình xem giá",
+                public_reply="DAN86 chào bạn",
+                private_inbox_sent=True,
+                now_ts=100000.0,
+                post_id="post_old",
+            )
+
+            # Thông báo mới từ bài viết khác KHÔNG có snippet (Facebook không trích dẫn nội dung)
+            notifs = [
+                {
+                    "index": 0,
+                    "text": "Đức Trí đã bình luận về một bài viết của bạn · vừa xong",
+                    "coords": {"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0},
+                }
+            ]
+
+            with patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.dismiss_blocking_modals", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.inspect_notifications_list", new_callable=AsyncMock, return_value=notifs), \
+                 patch("bot.page_bot_engine.process_post_comments_by_coordinates", new_callable=AsyncMock, return_value=1) as mock_post_proc, \
+                 patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock):
+
+                notif_loc = make_coord_mock_locator(rect_val={"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0}, inner_text_val="Đức Trí đã bình luận về bài viết")
+                page.locator = MagicMock(return_value=notif_loc)
+
+                replied = await process_facebook_notifications_tab(page, mem, dry_run=False)
+                # Bắt buộc bot KHÔNG được chặn oan thông báo này vì chưa có snippet
+                self.assertEqual(replied, 1)
+                mock_post_proc.assert_awaited_once()
+
+        asyncio.run(run_test())
+
+    def test_notifications_scanner_re_locates_by_author_when_card_shifted(self):
+        async def run_test():
+            page = MagicMock()
+            page.url = META_NOTIFICATIONS_URL
+            page.goto = AsyncMock()
+
+            # Ban đầu index 0 là card của Khách Khác sau khi reload, card của Đức Trí bị đẩy xuống vị trí khác
+            other_card = make_coord_mock_locator(inner_text_val="Khách Khác đã bình luận")
+            duc_tri_card = make_coord_mock_locator(inner_text_val="Đức Trí đã bình luận về bài viết")
+
+            def loc_side_effect(sel):
+                if 'has-text("Đức Trí")' in sel:
+                    return duc_tri_card
+                if '[data-dan86-notif-idx="0"]' in sel:
+                    return other_card
+                return make_coord_mock_locator(count_val=0, visible_val=False)
+
+            page.locator = MagicMock(side_effect=loc_side_effect)
+
+            notifs = [
+                {
+                    "index": 0,
+                    "text": "Đức Trí đã bình luận về bài viết của bạn: 'Tư vấn' · 1 phút",
+                    "coords": {"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0},
+                }
+            ]
+
+            mem = BotMemoryStore(memory_path=tempfile.NamedTemporaryFile().name)
+
+            with patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.dismiss_blocking_modals", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.inspect_notifications_list", new_callable=AsyncMock, return_value=notifs), \
+                 patch("bot.page_bot_engine.click_element_at_physical_coordinates", new_callable=AsyncMock, return_value=True) as mock_click, \
+                 patch("bot.page_bot_engine.process_post_comments_by_coordinates", new_callable=AsyncMock, return_value=1), \
+                 patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock):
+
+                replied = await process_facebook_notifications_tab(page, mem, dry_run=False)
+                self.assertEqual(replied, 1)
+                # Đảm bảo phần tử được click là duc_tri_card chứ không phải other_card
+                mock_click.assert_awaited_with(page, duc_tri_card, timeout_ms=3000)
+
+        asyncio.run(run_test())
 
 
 if __name__ == "__main__":
