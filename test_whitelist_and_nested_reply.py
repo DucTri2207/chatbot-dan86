@@ -6,26 +6,25 @@ from bot.memory_store import normalize_text
 
 class TestWhitelistAndNestedReply(unittest.TestCase):
 
-    def test_whitelist_contains_duc_tri(self):
-        """Đảm bảo danh sách TEST_ONLY_AUTHOR_WHITELIST chứa đầy đủ các biến thể của Đức Trí."""
-        self.assertTrue(len(TEST_ONLY_AUTHOR_WHITELIST) > 0)
-        self.assertIn("đức trí", TEST_ONLY_AUTHOR_WHITELIST)
-        self.assertIn("duc tri", TEST_ONLY_AUTHOR_WHITELIST)
+    def test_whitelist_empty_in_production_live(self):
+        """Đảm bảo danh sách TEST_ONLY_AUTHOR_WHITELIST rỗng [] để phục vụ mọi khách hàng trong Production Live."""
+        self.assertEqual(TEST_ONLY_AUTHOR_WHITELIST, [])
 
     def test_whitelist_matching_logic(self):
-        """Đảm bảo chỉ có Đức Trí và các biến thể vượt qua bộ lọc."""
+        """Đảm bảo thuật toán lọc whitelist hoạt động chính xác khi có danh sách whitelist."""
+        sample_whitelist = ["đức trí", "duc tri", "trí đức", "tri duc"]
         allowed_authors = ["Đức Trí", "duc tri", "Trí Đức", "TRI DUC", "Nguyễn Đức Trí"]
         blocked_authors = ["Hoa Muongbien", "Lệ Thuyền", "Bach Mai", "Ba Loc Tran", "Khách Hàng Lạ"]
 
         for author in allowed_authors:
             norm = normalize_text(author)
-            matches = any(w in norm for w in TEST_ONLY_AUTHOR_WHITELIST)
+            matches = any(w in norm for w in sample_whitelist)
             self.assertTrue(matches, f"Tác giả hợp lệ '{author}' phải được cho phép.")
 
         for author in blocked_authors:
             norm = normalize_text(author)
-            matches = any(w in norm for w in TEST_ONLY_AUTHOR_WHITELIST)
-            self.assertFalse(matches, f"Tác giả lạ '{author}' phải bị chặn 100% trong phiên sửa lỗi.")
+            matches = any(w in norm for w in sample_whitelist)
+            self.assertFalse(matches, f"Tác giả lạ '{author}' phải bị chặn khi whitelist kích hoạt.")
 
     def test_inspect_comment_panel_js_execution_no_reference_error(self):
         """

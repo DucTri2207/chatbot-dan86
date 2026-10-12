@@ -137,7 +137,7 @@ class TestDan86BotLogic(unittest.TestCase):
             now_ts=t_after_3h,
         )
         self.assertEqual(action_3h, "WAIT_STAFF_REPLY")
-        self.assertIn("0933 133 516", reply_text)
+        self.assertIn("https://dan86.vn", reply_text)
 
     def test_04_inbox_exact_three_hour_silence_logic(self) -> None:
         """

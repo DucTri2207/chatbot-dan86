@@ -133,6 +133,7 @@ class TestNotificationsParser(unittest.TestCase):
         self.assertEqual(res["author_name"], "bạn")
 
     def test_whitelist_matching_for_notifications(self):
+        sample_whitelist = ["đức trí", "duc tri", "trí đức", "tri duc"]
         candidates = [
             ("Đức Trí", True),
             ("Trí Đức", True),
@@ -144,7 +145,7 @@ class TestNotificationsParser(unittest.TestCase):
         ]
         for name, expected in candidates:
             c_norm = normalize_text(name)
-            matches = any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST)
+            matches = any(w in c_norm for w in sample_whitelist)
             self.assertEqual(matches, expected, f"Tác giả '{name}' kiểm tra whitelist thất bại!")
 
     def test_parse_da_tra_loi_notification(self):
@@ -501,7 +502,8 @@ class TestNotificationsTabWorkflow(unittest.TestCase):
                 }
             ]
 
-            with patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
+            with patch("bot.page_bot_engine.TEST_ONLY_AUTHOR_WHITELIST", ["đức trí", "duc tri"]), \
+                 patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
                  patch("bot.page_bot_engine.dismiss_blocking_modals", new_callable=AsyncMock), \
                  patch("bot.page_bot_engine.inspect_notifications_list", new_callable=AsyncMock, return_value=notifs), \
                  patch("bot.page_bot_engine.process_post_comments_by_coordinates", new_callable=AsyncMock, return_value=0) as mock_post_proc, \
@@ -509,10 +511,43 @@ class TestNotificationsTabWorkflow(unittest.TestCase):
 
                 replied = await process_facebook_notifications_tab(page, self.memory, dry_run=False)
 
-                # Người lạ ngoài Whitelist bị bỏ qua 100% -> không click và không xử lý
+                # Người lạ ngoài Whitelist bị bỏ qua 100% khi Whitelist được kích hoạt
                 self.assertEqual(replied, 0)
                 self.assertEqual(page.mouse.click.call_count, 0)
                 mock_post_proc.assert_not_awaited()
+
+        asyncio.run(run_test())
+
+    def test_notifications_scanner_processes_all_authors_when_whitelist_empty(self):
+        """Khi TEST_ONLY_AUTHOR_WHITELIST rỗng [] (Production Live), mọi khách hàng đều được bot tiếp nhận."""
+        async def run_test():
+            page = MagicMock()
+            page.url = META_NOTIFICATIONS_URL
+            page.goto = AsyncMock()
+            page.mouse = MagicMock()
+            page.mouse.click = AsyncMock()
+
+            notifs = [
+                {
+                    "index": 0,
+                    "text": "Nguyễn Văn Lạ đã bình luận về bài viết của bạn · 2 phút",
+                    "coords": {"x": 300.0, "y": 150.0, "width": 500.0, "height": 60.0},
+                }
+            ]
+
+            with patch("bot.page_bot_engine.TEST_ONLY_AUTHOR_WHITELIST", []), \
+                 patch("bot.page_bot_engine.verify_logged_in", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.dismiss_blocking_modals", new_callable=AsyncMock), \
+                 patch("bot.page_bot_engine.inspect_notifications_list", new_callable=AsyncMock, return_value=notifs), \
+                 patch("bot.page_bot_engine.click_element_at_physical_coordinates", new_callable=AsyncMock, return_value=True), \
+                 patch("bot.page_bot_engine.process_post_comments_by_coordinates", new_callable=AsyncMock, return_value=1) as mock_post_proc, \
+                 patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock):
+
+                replied = await process_facebook_notifications_tab(page, self.memory, dry_run=False)
+
+                # Mọi khách hàng đều được xử lý khi Whitelist là []
+                self.assertEqual(replied, 1)
+                mock_post_proc.assert_awaited_once()
 
         asyncio.run(run_test())
 

@@ -2008,12 +2008,12 @@ async def process_post_comments_by_coordinates(
                 )
                 continue
 
-            # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
+            # Chế độ thử nghiệm an toàn (nếu có cấu hình whitelist):
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(cand_author)
                 if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                     logger.info(
-                        "Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).",
+                        "Chế độ thử nghiệm: Bỏ qua khách [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).",
                         cand_author,
                     )
                     continue
@@ -2257,7 +2257,7 @@ async def process_post_comments_by_coordinates(
             c_norm = normalize_text(cand_author)
             if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
                 logger.info(
-                    "Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).",
+                    "Chế độ thử nghiệm: Bỏ qua gửi cmt công khai cho [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).",
                     cand_author,
                 )
                 continue
@@ -2323,7 +2323,7 @@ async def process_facebook_notifications_tab(
     1. Lọc thông báo mới có từ khóa bình luận ('đã bình luận', 'commented', 'đã phản hồi', 'replied').
     2. Trích xuất tên tác giả và thời gian tương đối ('vừa xong', '1 phút', 'vài giây').
     3. Lọc bỏ thông báo cũ (> 3 ngày, tuần, tháng, năm).
-    4. Kiểm tra Whitelist (TEST_ONLY_AUTHOR_WHITELIST: Đức Trí).
+    4. Kiểm tra Whitelist (nếu TEST_ONLY_AUTHOR_WHITELIST được cấu hình).
     5. Kiểm tra memory (chưa có trong replied_comments và không trong cooldown).
     6. Click chuột vật lý vào thông báo để Facebook mở chi tiết bài viết và cuộn tới đúng comment.
     7. Sử dụng Coordinate-based DOM Engine để phản hồi cmt lồng nhau và gửi tin nhắn riêng.
@@ -2370,11 +2370,11 @@ async def process_facebook_notifications_tab(
                 logger.info("Bỏ qua thông báo cũ từ [%s] (Thời gian: '%s').", author, time_str)
                 continue
 
-            # Whitelist filter
+            # Whitelist filter (nếu có cấu hình)
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(author)
                 if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
-                    logger.info("Chế độ thử nghiệm an toàn: Bỏ qua thông báo từ [%s] (Chỉ tương tác với Đức Trí).", author)
+                    logger.info("Chế độ thử nghiệm: Bỏ qua thông báo từ [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).", author)
                     continue
 
             # Memory cooldown check (chỉ áp dụng khi có snippet để tránh chặn oan thông báo bài viết khác khi chưa rõ nội dung)
@@ -2790,12 +2790,11 @@ async def process_messenger_inbox_tab(
                 memory.touch_staff_interaction(customer_name=customer_name, thread_id=thread_id)
                 continue
 
-            # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
-            # Người dùng chỉ đạo: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
+            # Chế độ thử nghiệm an toàn (nếu có cấu hình whitelist):
             if TEST_ONLY_AUTHOR_WHITELIST:
                 c_norm = normalize_text(customer_name)
                 if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
-                    logger.info("Chế độ thử nghiệm an toàn: Bỏ qua hội thoại Messenger từ [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", customer_name)
+                    logger.info("Chế độ thử nghiệm: Bỏ qua hội thoại Messenger từ [%s] (Không nằm trong TEST_ONLY_AUTHOR_WHITELIST).", customer_name)
                     continue
 
             action, reply_text, thread_key = memory.decide_inbox_action(

@@ -116,14 +116,8 @@ EXACT_SYSTEM_LABELS = {
 SYSTEM_BLACKLIST_STRINGS: List[str] = SYSTEM_PHRASES_BLACKLIST + list(EXACT_SYSTEM_LABELS)
 
 # CHẾ ĐỘ THỬ NGHIỆM AN TOÀN TRONG PHIÊN SỬA LỖI:
-# Nếu danh sách này không rỗng, Bot TUYỆT ĐỐI CHỈ tương tác (rep cmt & gửi inbox) với các khách hàng trong danh sách này!
-# Người dùng yêu cầu: "đừng gửi tin cmt cho bất cứ ai ngoài đức trí trong phiên sửa lỗi này"
-TEST_ONLY_AUTHOR_WHITELIST: List[str] = [
-    "đức trí",
-    "trí đức",
-    "duc tri",
-    "tri duc",
-]
+# Nếu danh sách này rỗng [], Bot sẽ tương tác (rep cmt & gửi inbox) với TẤT CẢ khách hàng!
+TEST_ONLY_AUTHOR_WHITELIST: List[str] = []
 
 # Cooldown chống Spam cấp độ khách hàng: Nếu một khách hàng vừa được rep trong vòng 60 giây gần nhất trên cùng bài viết, KHÔNG ĐƯỢC rep tiếp liên tục.
 CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS: float = 60.0  # 60 giây (1 phút)
@@ -198,14 +192,14 @@ MAX_THREADS_PER_CYCLE = 30                # Số hội thoại tối đa kiểm 
 # 1. MẪU CÂU TRẢ LỜI BÌNH LUẬN CÔNG KHAI (RANDOM XOAY VÒNG - REP 1 LẦN DUY NHẤT)
 # ==============================================================================
 COMMENT_REPLIES: List[str] = [
-    "Dạ chào {name}, DAN86 đã gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư/tin nhắn chờ giúp shop nhé! ❤️",
-    "Dạ shop chào {name} ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Bạn check inbox giúp shop nha! ✨",
-    "Dạ cảm ơn {name} đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động inbox tư vấn cho mình rồi ạ, bạn vào xem nhé! 🎁",
-    "Dạ chào {name}! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Cần hỗ trợ gấp bạn liên hệ Hotline/Zalo: 0933 133 516 nhé! 🌾",
-    "Dạ chào {name}, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger để shop tư vấn chi tiết set quà phù hợp nhất nhé! 🌿",
-    "Dạ cảm ơn {name} đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ, bạn mở tin nhắn xem giúp DAN86 nha! 🌸",
-    "Dạ chào {name} ạ, shop đã inbox trực tiếp thông tin các set quà thuần Việt cho mình rồi nhé. Bạn kiểm tra mục tin nhắn hoặc tin nhắn chờ giúp shop ạ! 💖",
-    "Dạ DAN86 xin chào {name}! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư giúp shop nhé! 🎋",
+    "Dạ chào {name}, DAN86 đã gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư/tin nhắn chờ hoặc ghé xem thêm tại https://dan86.vn giúp shop nhé! ❤️",
+    "Dạ shop chào {name} ạ! DAN86 vừa nhắn tin tư vấn chi tiết set quà qua Messenger cho bạn rồi nhé. Mời bạn check inbox hoặc xem các mẫu quà tại website https://dan86.vn nha! ✨",
+    "Dạ cảm ơn {name} đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động inbox tư vấn cho mình rồi ạ. Bạn có thể tham khảo thêm nhiều mẫu đẹp tại https://dan86.vn nhé! 🎁",
+    "Dạ chào {name}! DAN86 đã gửi hình ảnh thực tế và báo giá quà tặng vào tin nhắn cho mình rồi ạ. Bạn có thể xem trọn bộ set quà tại website: https://dan86.vn nhé! 🌾",
+    "Dạ chào {name}, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger hoặc truy cập https://dan86.vn để xem đầy đủ các set quà thuần Việt bên em nhé! 🌿",
+    "Dạ cảm ơn {name} đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ. Mời bạn ghé xem thêm sản phẩm tại https://dan86.vn nha! 🌸",
+    "Dạ chào {name} ạ, shop đã inbox trực tiếp thông tin các set quà thuần Việt cho mình rồi nhé. Bạn kiểm tra mục tin nhắn hoặc tham khảo bộ sưu tập tại https://dan86.vn giúp shop ạ! 💖",
+    "Dạ DAN86 xin chào {name}! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư hoặc xem trực tiếp tại https://dan86.vn nhé! 🎋",
 ]
 
 # ==============================================================================
@@ -216,7 +210,6 @@ PRIVATE_REPLIES_FROM_COMMENT: List[str] = [
         "Chào {name}, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\n"
         "Bên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n"
         "🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n"
-        "📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\n"
         "Dạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?"
     ),
     (
@@ -224,28 +217,25 @@ PRIVATE_REPLIES_FROM_COMMENT: List[str] = [
         "Hiện shop đang có sẵn nhiều mẫu set quà tặng tinh tế kết hợp đặc sản và thủ công truyền thống:\n"
         "- Hộp quà mây tre đan, túi cỏ bàng, khăn rằn dệt tay.\n"
         "- Nông sản rang mộc, trà thảo mộc hữu cơ, mật ong rừng, tinh dầu thiên nhiên.\n"
-        "🌐 Chi tiết sản phẩm: https://dan86.vn | 📞 Zalo/Hotline: 0933 133 516\n"
+        "🌐 Chi tiết sản phẩm & bảng giá: https://dan86.vn\n"
         "Bạn đang cần tìm quà tặng cho cá nhân hay cho đoàn/doanh nghiệp để shop hỗ trợ mình ngay nhé!"
     ),
     (
         "Dạ DAN86 chào {name} nhé! Shop thấy mình vừa bình luận trên bài viết của trang nên nhắn tin hỗ trợ mình ngay ạ. ❤️\n"
         "Các set quà bên em đều được làm thủ công tỉ mỉ từ mây tre đan, cỏ bàng kết hợp đặc sản thuần Việt, nhận thiết kế riêng và in logo theo yêu cầu.\n"
-        "🌐 Mời bạn xem mẫu & bảng giá tại: https://dan86.vn\n"
-        "📞 Hotline / Zalo: 0933 133 516\n"
+        "🌐 Mời bạn xem trọn bộ mẫu & bảng giá tại: https://dan86.vn\n"
         "Dạ mình dự định đặt số lượng khoảng bao nhiêu set để bên em báo giá tốt nhất cho mình ạ?"
     ),
     (
         "Xin chào {name}! Cảm ơn bạn đã yêu thích các set quà mộc mạc thuần Việt của DAN86. 🌿\n"
         "Shop xin gửi thông tin để bạn dễ tham khảo:\n"
-        "✨ Toàn bộ mẫu quà tặng mới nhất: https://dan86.vn\n"
-        "✨ Hotline / Zalo tư vấn trực tiếp: 0933 133 516\n"
+        "✨ Toàn bộ mẫu quà tặng mới nhất được cập nhật tại website: https://dan86.vn\n"
         "Dạ bạn đang tìm quà tặng cho dịp nào để nhân viên bên em gửi hình ảnh thực tế từng mẫu cho mình chọn nhé!"
     ),
     (
         "Dạ chào {name} ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\n"
         "Bên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n"
-        "🌐 Website: https://dan86.vn\n"
-        "📞 Zalo/Hotline hỗ trợ gấp: 0933 133 516\n"
+        "🌐 Bạn có thể xem nhanh các set quà tại website: https://dan86.vn\n"
         "Bạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!"
     ),
 ]
@@ -260,29 +250,25 @@ FIRST_INBOX_REPLIES: List[str] = [
         "1. Set quà tặng cá nhân (dịp lễ, sinh nhật, tri ân).\n"
         "2. Set quà lưu niệm cho du khách, đoàn khách quốc tế.\n"
         "3. Quà tặng doanh nghiệp thiết kế theo yêu cầu (in logo, may đo riêng).\n\n"
-        "🌐 Mời bạn tham khảo các mẫu mới nhất tại: https://dan86.vn\n"
-        "📞 Hỗ trợ nhanh (Hotline/Zalo): 0933 133 516\n"
+        "🌐 Mời bạn tham khảo các mẫu mới nhất tại website: https://dan86.vn\n"
         "Dạ bạn đang cần tìm quà tặng cho dịp nào và số lượng bao nhiêu ạ? Shop sẽ hỗ trợ bạn ngay!"
     ),
     (
         "Dạ chào {name} ạ! Cảm ơn bạn đã liên hệ Quà tặng thuần Việt DAN86 (CTY TNHH Bá Lộc Green). 🌿\n"
         "Bên em chuyên cung cấp các set quà tặng thủ công mây tre đan, túi cỏ bàng, khăn rằn Nam Bộ, cà phê phin và đặc sản thiên nhiên Việt Nam.\n"
-        "🌐 Danh mục sản phẩm & bảng giá: https://dan86.vn\n"
-        "📞 Hotline / Zalo: 0933 133 516\n"
+        "🌐 Danh mục sản phẩm & bảng giá chi tiết: https://dan86.vn\n"
         "Dạ mình đang quan tâm mẫu quà tặng nào hoặc ngân sách khoảng bao nhiêu để DAN86 tư vấn chi tiết cho mình nhé!"
     ),
     (
         "Dạ shop chào {name}! Rất vui được đón tiếp bạn tại Fanpage Dần86Farm (DAN86). ❤️\n"
         "Bên em chuyên thiết kế các set quà tặng văn hóa thuần Việt (lẻ & sỉ doanh nghiệp, quà tặng đối tác nước ngoài, quà lễ/tri ân).\n"
-        "🌐 Xem trọn bộ sưu tập tại: https://dan86.vn\n"
-        "📞 Liên hệ nhanh qua Zalo/SĐT: 0933 133 516\n"
+        "🌐 Xem trọn bộ sưu tập tại website chính thức: https://dan86.vn\n"
         "Bạn nhắn giúp shop mẫu bạn đang ưng ý hoặc số lượng cần đặt để shop báo giá chi tiết ngay nha!"
     ),
     (
         "Xin chào {name}! Cảm ơn bạn đã quan tâm đến sản phẩm của DAN86. 🌾\n"
         "Tất cả các set quà bên em đều được chăm chút tỉ mỉ từ chất liệu thủ công Việt Nam (mây tre, cỏ bàng, khăn rằn, nông sản sạch...).\n"
-        "🌐 Tham khảo mẫu và giá tại: https://dan86.vn\n"
-        "📞 Hotline / Zalo: 0933 133 516\n"
+        "🌐 Tham khảo các mẫu và báo giá tại: https://dan86.vn\n"
         "Dạ bạn đang cần tư vấn set quà cho cá nhân hay đơn hàng doanh nghiệp ạ?"
     ),
 ]
@@ -294,26 +280,26 @@ WAIT_STAFF_REPLIES: List[str] = [
     (
         "Dạ DAN86 đã nhận được tin nhắn của {name} rồi ạ! "
         "Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. "
-        "Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️"
+        "Trong lúc chờ đợi, bạn có thể tham khảo thêm các set quà tại website: https://dan86.vn ạ! ❤️"
     ),
     (
         "Dạ cảm ơn {name} đã nhắn tin cho DAN86! "
         "Shop đã ghi nhận nội dung của mình, bộ phận tư vấn sẽ phản hồi lại cho bạn ngay trong ít phút nữa nha. "
-        "Cần hỗ trợ tức thì bạn liên hệ Hotline/Zalo: 0933 133 516 giúp shop nhé! 🌿"
+        "Mời bạn ghé xem chi tiết sản phẩm và bảng giá tại website: https://dan86.vn giúp shop nhé! 🌿"
     ),
     (
         "Dạ shop đã nhận được phản hồi của {name} ạ! "
         "Nhân viên trực page của DAN86 sẽ vào liên hệ và tư vấn chi tiết cho mình ngay bây giờ nhé. "
-        "Hotline/Zalo hỗ trợ nhanh: 0933 133 516 ạ! 🎁"
+        "Bạn có thể xem trước các mẫu set quà mới nhất tại website: https://dan86.vn ạ! 🎁"
     ),
     (
         "Dạ thông tin của {name} đã được chuyển tới bộ phận chăm sóc khách hàng của DAN86 rồi ạ! "
         "Bạn vui lòng đợi ít phút nhân viên bên em sẽ vào trả lời mình ngay nha. "
-        "Nếu cần trao đổi gấp, bạn kết nối Zalo/Hotline: 0933 133 516 nhé! ✨"
+        "Bạn cũng có thể tham khảo trọn bộ sưu tập quà tặng tại website: https://dan86.vn nhé! ✨"
     ),
     (
         "Dạ cảm ơn {name}! Hiện nhân viên tư vấn của DAN86 đang bận xử lý đơn trong giây lát và sẽ liên hệ lại với bạn ngay lập tức ạ. "
-        "Bạn cũng có thể nhắn trực tiếp qua Zalo/Hotline: 0933 133 516 để được ưu tiên hỗ trợ ngay nhé! 🌾"
+        "Trong thời gian này, mời bạn tham khảo thêm thông tin tại website chính thức: https://dan86.vn nhé! 🌾"
     ),
 ]
 

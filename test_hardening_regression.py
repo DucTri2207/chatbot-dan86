@@ -380,7 +380,7 @@ class TestHardeningRegression(unittest.TestCase):
         self.assertEqual(action1, "FIRST_REPLY")
         self.assertIn("Thu Thảo", reply1)
         self.assertIn("DAN86", reply1)
-        self.assertIn("0933 133 516", reply1)
+        self.assertIn("https://dan86.vn", reply1)
 
         self.memory.record_inbox_reply(
             thread_key=key1,
@@ -413,7 +413,7 @@ class TestHardeningRegression(unittest.TestCase):
         )
         self.assertEqual(action3, "WAIT_STAFF_REPLY")
         self.assertIn("Thu Thảo", reply3)
-        self.assertIn("0933 133 516", reply3)
+        self.assertIn("https://dan86.vn", reply3)
         self.assertTrue("nhân viên" in reply3.lower() or "tư vấn" in reply3.lower() or "chăm sóc khách hàng" in reply3.lower())
 
         self.memory.record_inbox_reply(
