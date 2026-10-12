@@ -176,3 +176,56 @@ Integrity mode: development
 - [ ] Cơ chế `pick_template` chọn ngẫu nhiên mượt mà và không trùng lặp câu liền kề.
 - [ ] 100% Unit Tests PASS (không có bất kỳ fail hay error nào).
 - [ ] Code được commit & push lên `master`, ca VPS mới chạy ổn định trên GitHub Actions.
+
+## 2026-10-12T16:54:38Z
+
+This is a single self-contained fix; keep it small and focused.
+
+Working directory: d:\chat bot dan 86
+Integrity mode: development
+
+## Problem & Context
+
+1. **Lỗi trả lời đè (Double-Reply / Mù trước bình luận cũ của Page)**:
+   - Trong `bot/page_bot_engine.py` (hàm `inspect_comment_panel` dòng 1140-1148), có logic `isGenericSystemReply` ép `isPageReply = false` nếu bình luận có chữ "đã gửi tin nhắn cho bạn" hoặc "đã gửi tin nhắn". Điều này khiến bot cố tình phớt lờ câu trả lời của Page và trả lời đè lần 2.
+   - Danh sách `PAGE_NAMES` trong `bot/bot_config.py` thiếu tên đầy đủ hiển thị thực tế của Page: "Quà tặng thuần Việt DAN86", "DAN86 - Quà tặng thuần Việt", dẫn đến việc so khớp tên bị trượt.
+   - DOM thiếu nhận diện huy hiệu "Tác giả" / "Author" của Facebook.
+
+2. **Lỗi kẹt vòng lặp thử lại (Retry Loop Bottleneck)**:
+   - Trong `bot/memory_store.py` (`should_reply_comment` dòng 380-384 và 393-397):
+     `if (p_reply.startswith("(Bỏ qua") or p_reply.startswith("(Đã phản hồi")) and not has_page_reply_in_dom: pass`
+     Khi một comment bị bỏ qua cmt công khai (vì không tìm thấy ô lồng nhau), nó lại thực hiện `pass` và trả về `True`, khiến bot cố thử lại 5-6 lần liên tiếp trong cùng một chu kỳ, ngốn mất 10-14 phút và chặn đứng tất cả comment của khách hàng khác.
+
+## Requirements
+
+### R1. Khắc phục triệt để cơ chế nhận diện phản hồi của Fanpage (Chống trả lời đè)
+- Trong `bot/page_bot_engine.py` (`inspect_comment_panel`):
+  - XÓA BỎ 100% đoạn ép buộc `isGenericSystemReply` (bất kể câu trả lời trước đó của Page có chứa từ khóa gì, chỉ cần là Page hoặc tác giả thì BẮT BUỘC tính là `isPageReply = true`).
+  - Nhận diện huy hiệu "Tác giả" / "Author" trên comment article: Nếu article có chứa `tác giả`, `author`, `badge`, hoặc biểu tượng tác giả của bài viết -> `isPageReply = true`.
+- Trong `bot/bot_config.py`:
+  - Bổ sung vào `PAGE_NAMES`: `"quà tặng thuần việt dan86"`, `"quà tặng thuần việt"`, `"dan86 - quà tặng thuần việt"`, `"dan86 quà tặng thuần việt"`, `"bá lộc green"`.
+
+### R2. Khóa vĩnh viễn vòng lặp Retry lặp lại (Chống kẹt hàng đợi)
+- Trong `bot/memory_store.py` (`should_reply_comment`):
+  - Xóa bỏ nhánh `pass` cho `(Bỏ qua...` và `(Đã phản hồi...`.
+  - Một khi bình luận đã có bản ghi trong `replied_comments` (dù là đã phản hồi công khai hay đã bỏ qua cmt công khai), BẮT BUỘC trả về `False, key` ngay lập tức.
+  - Đảm bảo mỗi comment chỉ được xử lý đúng 1 lượt duy nhất trong toàn bộ vòng đời của bot.
+
+### R3. Kiểm chứng bộ Unit Test
+- Cập nhật test nếu có assertion phụ thuộc.
+- Chạy toàn bộ test suite `python -m unittest discover -s . -p "test_*.py" -v` đảm bảo 100% tests PASS, không có bất kỳ regression nào.
+
+### R4. Triển khai & Kích hoạt Ca VPS 24/7 Mới
+- Đẩy toàn bộ mã nguồn lên nhánh `master`.
+- Hủy ca VPS cũ (nếu đang chạy) và kích hoạt ca VPS mới qua `gh workflow run vps_bot_24_7.yml`.
+- Xác nhận ca mới đã khởi động thành công và sẵn sàng chạy 24/7.
+
+## Acceptance Criteria
+
+### Tính Chuẩn Xác & Vận Hành
+- [ ] Xóa bỏ hoàn toàn `isGenericSystemReply`, không bao giờ ép `isPageReply = false` khi Page đã phản hồi.
+- [ ] Bổ sung đầy đủ nhận diện tên Fanpage và huy hiệu "Tác giả" của Facebook.
+- [ ] Khóa triệt để cơ chế retry lặp lại trong `memory_store.py`: Mỗi comment chỉ xử lý đúng 1 lần.
+- [ ] 100% Unit Tests PASS không có lỗi hồi quy.
+- [ ] Code được commit & push lên `master`.
+- [ ] Khởi chạy ca VPS mới trên GitHub Actions và kiểm tra trạng thái in_progress.

@@ -55,6 +55,10 @@ PAGE_NAMES = [
     "dần86farm",
     "bá lộc green",
     "ba loc green",
+    "quà tặng thuần việt dan86",
+    "quà tặng thuần việt",
+    "dan86 - quà tặng thuần việt",
+    "dan86 quà tặng thuần việt",
 ]
 
 # Danh sách các cụm từ nhãn trạng thái hệ thống cấm kỵ (không bao giờ là tên người)

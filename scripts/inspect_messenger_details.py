@@ -17,6 +17,10 @@ PAGE_NAMES = [
     "dần86farm",
     "bá lộc green",
     "ba loc green",
+    "quà tặng thuần việt dan86",
+    "quà tặng thuần việt",
+    "dan86 - quà tặng thuần việt",
+    "dan86 quà tặng thuần việt",
 ]
 
 async def inspect_messenger_details():

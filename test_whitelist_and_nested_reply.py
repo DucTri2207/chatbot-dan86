@@ -196,6 +196,201 @@ class TestWhitelistAndNestedReply(unittest.TestCase):
         import asyncio
         asyncio.run(self._async_test_locate_nested_reply_box())
 
+    def test_r1_page_names_contain_full_display_aliases(self):
+        """R1: Đảm bảo PAGE_NAMES chứa đầy đủ các tên hiển thị của Fanpage."""
+        from bot.bot_config import PAGE_NAMES
+        required_names = [
+            "quà tặng thuần việt dan86",
+            "quà tặng thuần việt",
+            "dan86 - quà tặng thuần việt",
+            "dan86 quà tặng thuần việt",
+            "bá lộc green",
+        ]
+        for name in required_names:
+            self.assertIn(name, PAGE_NAMES, f"PAGE_NAMES phải chứa '{name}'")
+
+    def test_r2_retry_loop_locked_in_memory_store(self):
+        """
+        R2: Đảm bảo vòng lặp retry bị khóa vĩnh viễn:
+        Khi bình luận đã có bản ghi trong replied_comments (kể cả Bỏ qua cmt công khai hay Đã phản hồi),
+        should_reply_comment BẮT BUỘC trả về False, key ngay lập tức dù has_page_reply_in_dom là False.
+        """
+        import tempfile
+        from bot.memory_store import BotMemoryStore
+
+        with tempfile.NamedTemporaryFile(suffix=".json", delete=False) as tf:
+            temp_path = tf.name
+
+        mem = BotMemoryStore(memory_path=temp_path)
+        post_id = "test_post_lock"
+        author = "Nguyễn Văn Test"
+        comment_text = "Tư vấn sản phẩm nhé shop"
+
+        # Lần 1: Bình luận mới -> Được phép trả lời
+        should_rep1, key1 = mem.should_reply_comment(
+            author_name=author,
+            comment_text=comment_text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=0,
+        )
+        self.assertTrue(should_rep1)
+
+        # Giả lập bot đánh dấu bỏ qua cmt công khai (vì không tìm thấy ô lồng nhau)
+        mem.mark_comment_replied(
+            comment_key=key1,
+            author_name=author,
+            comment_text=comment_text,
+            public_reply="(Bỏ qua cmt công khai - Không tìm thấy ô lồng nhau)",
+            private_inbox_sent=True,
+            private_reply_text="Inbox test",
+            post_id=post_id,
+            dom_index=0,
+        )
+
+        # Lần 2: Quét lại cùng bình luận khi DOM không có page reply -> KHÔNG ĐƯỢC RETRY (phải trả về False)
+        should_rep2, key2 = mem.should_reply_comment(
+            author_name=author,
+            comment_text=comment_text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=0,
+        )
+        self.assertFalse(should_rep2, "Bình luận đã ghi nhận (Bỏ qua...) TUYỆT ĐỐI không được retry lặp lại!")
+        self.assertEqual(key1, key2)
+
+        # Thử lại với một bình luận khác đánh dấu (Đã phản hồi bình luận công khai)
+        author_b = "Trần Thị Test"
+        should_rep_b1, key_b1 = mem.should_reply_comment(
+            author_name=author_b,
+            comment_text="Hỏi giá",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+        )
+        self.assertTrue(should_rep_b1)
+
+        mem.mark_comment_replied(
+            comment_key=key_b1,
+            author_name=author_b,
+            comment_text="Hỏi giá",
+            public_reply="(Đã phản hồi bình luận công khai)",
+            private_inbox_sent=True,
+            private_reply_text="Inbox test b",
+            post_id=post_id,
+            dom_index=1,
+        )
+
+        should_rep_b2, _ = mem.should_reply_comment(
+            author_name=author_b,
+            comment_text="Hỏi giá",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+        )
+        self.assertFalse(should_rep_b2, "Bình luận đã ghi nhận (Đã phản hồi...) TUYỆT ĐỐI không được retry!")
+
+    def test_r1_inspect_comment_panel_author_badge_and_no_generic_reply_override(self):
+        """
+        R1: Kiểm tra JS inspect_comment_panel:
+        1. Xóa bỏ 100% isGenericSystemReply: Page trả lời có chứa 'đã gửi tin nhắn cho bạn'
+           vẫn BẮT BUỘC được tính là isPageReply = true -> unreplied_count = 0 (Chống trả lời đè).
+        2. Nhận diện Fanpage theo tên đầy đủ 'Quà tặng thuần Việt DAN86'.
+        3. Nhận diện huy hiệu Tác giả / Author.
+        """
+        with open('bot/page_bot_engine.py', 'r', encoding='utf-8') as f:
+            content = f.read()
+
+        part = content.split('async def inspect_comment_panel')[1]
+        js = part.split('js_code = r"""')[1].split('"""')[0]
+
+        from bot.bot_config import PAGE_NAMES
+        import json
+        page_names_json = json.dumps(PAGE_NAMES)
+
+        node_script = f"""
+        const fn = {js};
+        const pageNames = {page_names_json};
+
+        const makeEl = (aria, text, left = 350, querySelectorResult = null) => ({{
+          getAttribute: (a) => a === "aria-label" ? aria : "",
+          setAttribute: () => {{}},
+          removeAttribute: () => {{}},
+          innerText: text,
+          children: [],
+          querySelectorAll: () => [],
+          querySelector: (sel) => querySelectorResult ? querySelectorResult(sel) : null,
+          closest: () => null,
+          getBoundingClientRect: () => ({{ left: left, top: 100, height: 50 }})
+        }});
+
+        // Scenario 1: Page trả lời chứa 'đã gửi tin nhắn cho bạn' -> BẮT BUỘC nhận diện isPageReply = true
+        // Comment 1: Khách hàng (left=350)
+        // Comment 2: Page reply lồng nhau (left=380) có tên 'Quà tặng thuần Việt DAN86' và câu 'Đã gửi tin nhắn cho bạn!'
+        const doc1 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách Hàng vào 2 giờ trước", "Khách Hàng\\n2 giờ\\nSet quà bao nhiêu\\nTrả lời\\nGửi tin nhắn\\nẨn", 350),
+                makeEl("Bình luận dưới tên Quà tặng thuần Việt DAN86 vào 1 giờ trước", "Quà tặng thuần Việt DAN86\\n1 giờ\\nĐã gửi tin nhắn cho bạn!\\nTrả lời\\nẨn", 380)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc1;
+        global.window = {{ location: {{ search: "?selected_item_id=post_1" }} }};
+        global.URLSearchParams = class {{ get() {{ return "post_1"; }} }};
+
+        const res1 = fn(pageNames);
+        if (res1.unreplied_count !== 0) {{
+          throw new Error("Scenario 1 failed: Expected unreplied_count == 0, got " + res1.unreplied_count);
+        }}
+
+        // Scenario 2: Reply có huy hiệu 'Tác giả' -> BẮT BUỘC nhận diện isPageReply = true
+        const doc2 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách B vào 2 giờ trước", "Khách B\\n2 giờ\\nCho hỏi giá\\nTrả lời\\nGửi tin nhắn\\nẨn", 350),
+                makeEl("Bình luận dưới tên Shop vào 1 giờ trước", "Shop\\nTác giả\\n1 giờ\\nDạ shop đã phản hồi nhé!\\nTrả lời\\nẨn", 380)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc2;
+        const res2 = fn(pageNames);
+        if (res2.unreplied_count !== 0) {{
+          throw new Error("Scenario 2 failed (Author badge in text): Expected unreplied_count == 0, got " + res2.unreplied_count);
+        }}
+
+        // Scenario 3: Article có DOM element badge tác giả (aria-label="Tác giả") -> BẮT BUỘC nhận diện isPageReply = true
+        const doc3 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách C vào 2 giờ trước", "Khách C\\n2 giờ\\nCho hỏi quà tết\\nTrả lời\\nGửi tin nhắn\\nẨn", 350),
+                makeEl("Bình luận của Nick vào 1 giờ trước", "Nick\\n1 giờ\\nDạ chào bạn\\nTrả lời\\nẨn", 380, (sel) => {{
+                  if (sel.includes('tác giả')) return {{ ariaLabel: 'Tác giả' }};
+                  return null;
+                }})
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc3;
+        const res3 = fn(pageNames);
+        if (res3.unreplied_count !== 0) {{
+          throw new Error("Scenario 3 failed (Author badge in DOM querySelector): Expected unreplied_count == 0, got " + res3.unreplied_count);
+        }}
+
+        console.log("ALL_SCENARIOS_OK");
+        """
+        res = subprocess.run(["node", "-e", node_script], capture_output=True, text=True, check=True)
+        self.assertIn("ALL_SCENARIOS_OK", res.stdout)
+
 
 if __name__ == "__main__":
     unittest.main()

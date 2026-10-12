@@ -1132,21 +1132,6 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             const lowerAria = aria.toLowerCase();
             const lowerInner = inner.toLowerCase();
 
-            // Kiểm tra xem article này là phản hồi của chính Fanpage
-            let isPageReply = lowerAria.includes("dưới tên dần86farm") ||
-                              lowerAria.includes("dưới tên dan86") ||
-                              pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\n") || lowerInner.includes("tác giả\n" + p));
-
-            // ĐẶC BIỆT: Nếu phản hồi này chỉ là câu hệ thống tự động của Facebook (như 'Đã gửi tin nhắn cho bạn!' hoặc 'Shop Dan86 chào bạn'),
-            // TUYỆT ĐỐI KHÔNG tính là đã phản hồi thật sự! Bot phải tiếp tục vào trả lời đầy đủ thông tin + website!
-            const isGenericSystemReply = lowerInner.includes("đã gửi tin nhắn cho bạn") ||
-                                         lowerInner.includes("shop dan86 chào bạn") ||
-                                         lowerInner.includes("sent a message to you") ||
-                                         lowerInner.includes("đã gửi tin nhắn");
-            if (isGenericSystemReply) {
-                isPageReply = false;
-            }
-
             // Trích xuất tên tác giả
             let authorName = "";
             const mAria = aria.match(/Bình luận dưới tên\s+(.+?)(?:\s+vào\s+|$)/i) ||
@@ -1175,6 +1160,35 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                     }
                 }
             }
+
+            // Nhận diện huy hiệu "Tác giả" / "Author" trên comment article:
+            // Nếu article có chứa 'tác giả', 'author', 'badge', hoặc biểu tượng tác giả của bài viết -> isPageReply = true
+            const hasAuthorBadge = lowerAria.includes("tác giả") ||
+                                   lowerAria.includes("author") ||
+                                   lowerInner.includes("tác giả\n") ||
+                                   lowerInner.includes("\ntác giả") ||
+                                   lowerInner.includes("author\n") ||
+                                   lowerInner.includes("\nauthor") ||
+                                   lines.some(l => {
+                                       const low = l.toLowerCase();
+                                       return low === 'tác giả' || low === 'author' ||
+                                              low.startsWith('tác giả ·') || low.startsWith('author ·') ||
+                                              low.startsWith('tác giả\n') || low.startsWith('author\n');
+                                   }) ||
+                                   Boolean(art.querySelector('[aria-label*="tác giả" i], [aria-label*="author" i], [aria-label*="badge" i], [title*="tác giả" i], [title*="author" i], [title*="badge" i], [data-badge]')) ||
+                                   Boolean(art.querySelector('svg[aria-label*="tác giả" i], svg[aria-label*="author" i], svg[aria-label*="badge" i]'));
+
+            // Kiểm tra xem article này là phản hồi của chính Fanpage hoặc Tác giả
+            const lowAuthor = (authorName || '').toLowerCase();
+            let isPageReply = hasAuthorBadge ||
+                              lowerAria.includes("dưới tên dần86farm") ||
+                              lowerAria.includes("dưới tên dan86") ||
+                              pageNames.some(p => lowerAria.includes(p) ||
+                                                  lowAuthor.includes(p) ||
+                                                  lowerInner.startsWith(p) ||
+                                                  lowerInner.includes(p + "\n") ||
+                                                  lowerInner.includes("tác giả\n" + p) ||
+                                                  lowerInner.includes("author\n" + p));
 
             // Trích xuất dấu thời gian độc lập để kiểm tra bình luận cũ (tránh lọc nhầm nội dung khách)
             let timeStr = "";
@@ -1212,7 +1226,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 const isTimestampLine = /^\s*\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*$/i.test(trimmed) || /^(?:vừa xong|just now|hôm qua|yesterday|·)$/i.test(trimmed);
                 if (l === authorName || isTimestampLine) return false;
                 if (/^\d+(\s+(?:phản hồi|bình luận|replies|reply))?$/i.test(trimmed)) return false;
-                if (['trả lời', 'reply', 'phản hồi', 'ẩn', 'hide', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'send message', 'thích', 'like', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả'].includes(low)) return false;
+                if (['trả lời', 'reply', 'phản hồi', 'ẩn', 'hide', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'send message', 'thích', 'like', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả', 'author'].includes(low)) return false;
                 return true;
             });
             let commentText = contentLines.join(" ").trim();
