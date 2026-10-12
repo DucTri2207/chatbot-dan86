@@ -163,7 +163,7 @@ def clean_customer_name(name: str) -> str:
 
 
 # Thông số thời gian & Chống Facebook quét Spam (Human-like delays)
-SCAN_INTERVAL_SECONDS = (25, 45)          # Khoảng nghỉ giữa mỗi chu kỳ quét (25 - 45 giây)
+SCAN_INTERVAL_SECONDS = (15, 30)          # Khoảng nghỉ giữa mỗi chu kỳ quét (15 - 30 giây)
 ACTION_COOLDOWN_SECONDS = (5, 10)         # Nghỉ ngơi giữa mỗi khách hàng (5 - 10 giây)
 TYPING_DELAY_MS = (20, 45)                # Tốc độ gõ từng ký tự (ms) như người thật
 SILENCE_REMINDER_MINUTES = 180            # 3 tiếng (180 phút): 2 bên im lặng quá 3 tiếng khách nhắn lại mới báo tin chờ 1 lần

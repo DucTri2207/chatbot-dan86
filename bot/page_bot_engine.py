@@ -184,12 +184,47 @@ async def human_sleep(min_sec: float = 1.5, max_sec: float = 3.5) -> None:
     await asyncio.sleep(random.uniform(min_sec, max_sec))
 
 
+async def safe_click(
+    locator: Locator,
+    timeout: int = 2500,
+    position: Optional[Dict[str, float]] = None,
+) -> bool:
+    """
+    Thực hiện nhấp chuột an toàn chống lỗi pointer-events interception:
+    1. Cuộn phần tử vào tầm nhìn (scroll_into_view_if_needed).
+    2. Thử nhấp bằng Playwright với force=True và timeout quy định.
+    3. Nếu gặp ngoại lệ / timeout (do bị phần tử khác che phủ / subtree intercepts pointer events),
+       bắt ngoại lệ, ghi log cảnh báo và kích hoạt synthetic click bằng JavaScript DOM.
+    """
+    try:
+        await locator.scroll_into_view_if_needed(timeout=1500)
+    except Exception:
+        pass
+
+    try:
+        if position:
+            await locator.click(timeout=timeout, force=True, position=position)
+        else:
+            await locator.click(timeout=timeout, force=True)
+        return True
+    except Exception as e:
+        logger.warning("safe_click: click tiêu chuẩn gặp lỗi (%s), kích hoạt fallback JavaScript...", e)
+        try:
+            await locator.evaluate(
+                "el => { el.dispatchEvent(new MouseEvent('click', {bubbles: true, cancelable: true, view: window})); el.click(); }"
+            )
+            return True
+        except Exception as js_err:
+            logger.warning("safe_click: fallback JavaScript cũng thất bại (%s)", js_err)
+            return False
+
+
 async def type_human_like(page: Page, locator: Locator, text: str) -> None:
     """
     Gõ văn bản vào ô chat giống người thật (hỗ trợ xuống dòng Shift+Enter
     để không bị gửi sớm khi mẫu câu có nhiều dòng).
     """
-    await locator.click()
+    await safe_click(locator, timeout=2500)
     await human_sleep(0.4, 0.9)
 
     lines = text.split("\n")
@@ -336,13 +371,14 @@ def clean_comment_text(text: str) -> str:
     Cắt bỏ sạch tiền tố thời gian khỏi nội dung bình luận:
     Ví dụ: '1 năm Ib' -> 'Ib'
            '2 giờ Giá sao bạn' -> 'Giá sao bạn'
+           '15 giây Cho e xin giá' -> 'Cho e xin giá'
            'vừa xong Cho e xin giá' -> 'Cho e xin giá'
     """
     if not text:
         return ""
-    # Cắt bỏ tiền tố thời gian dạng: '1 năm', '2 tháng', '10 tuần', '3 ngày', '2 giờ', '15 phút', etc.
+    # Cắt bỏ tiền tố thời gian dạng: '1 năm', '2 tháng', '10 tuần', '3 ngày', '2 giờ', '15 phút', '30 giây', etc.
     cleaned = re.sub(
-        r'^\s*\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*',
+        r'^\s*\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*',
         '',
         text,
         flags=re.IGNORECASE,
@@ -360,14 +396,14 @@ def clean_comment_text(text: str) -> str:
 def is_old_comment_timestamp(text: str, aria: str = "") -> bool:
     """
     Kiểm tra xem bình luận có phải là bình luận cũ không:
-    - Bình luận cũ: có dấu thời gian 'tuần', 'tháng', 'năm' (hoặc 'week', 'month', 'year')
+    - Bình luận cũ: có dấu thời gian 'tuần', 'tháng', 'năm' (hoặc 'week', 'month', 'year', 'w', 'y')
     - Hoặc số ngày > 3 ngày (ví dụ: '4 ngày', '5 ngày', '10 ngày'...).
-    - Chỉ xử lý bình luận MỚI: 'vừa xong', 'phút', 'giờ', 'hôm qua', '1 ngày'..'3 ngày'.
+    - Chỉ xử lý bình luận MỚI: 'vừa xong', 'giây', 'phút', 'giờ', 'hôm qua', '1 ngày'..'3 ngày'.
     """
     combined = f"{text or ''} {aria or ''}".lower()
 
-    # 1. Tuần, tháng, năm
-    if re.search(r'\b\d+\s*(tuần|tháng|năm|week|month|year)s?\b', combined):
+    # 1. Tuần, tháng, năm (bao gồm w, y)
+    if re.search(r'\b\d+\s*(?:tuần|tháng|năm|week|month|year|w|y)s?\b', combined):
         return True
     if any(k in combined for k in [
         "năm trước", "tháng trước", "tuần trước",
@@ -377,7 +413,7 @@ def is_old_comment_timestamp(text: str, aria: str = "") -> bool:
         return True
 
     # 2. Số ngày > 3
-    day_match = re.search(r'\b(\d+)\s*(ngày|days?)\b', combined)
+    day_match = re.search(r'\b(\d+)\s*(?:ngày|days?|d)\b', combined)
     if day_match:
         try:
             num_days = int(day_match.group(1))
@@ -630,8 +666,10 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             // Trích xuất nội dung bình luận (cho phép bình luận 1 ký tự, icon, số, chữ ngắn)
             const contentLines = lines.filter(l => {
                 const low = l.toLowerCase();
-                if (l === authorName || low.includes('tuần') || low.includes('ngày') || low.includes('phút') || low.includes('giờ') || l === '·') return false;
-                if (/^\d+(\s+(?:phản hồi|bình luận|replies|reply))?$/i.test(l.trim())) return false;
+                const trimmed = l.trim();
+                const isTimestampLine = /^\s*\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*$/i.test(trimmed) || /^(?:vừa xong|just now|hôm qua|yesterday|·)$/i.test(trimmed);
+                if (l === authorName || isTimestampLine) return false;
+                if (/^\d+(\s+(?:phản hồi|bình luận|replies|reply))?$/i.test(trimmed)) return false;
                 if (['trả lời', 'reply', 'phản hồi', 'ẩn', 'hide', 'see chat', 'nhắn tin', 'gửi tin nhắn', 'send message', 'thích', 'like', 'bày tỏ cảm xúc', 'theo dõi lại', 'theo dõi', 'tác giả'].includes(low)) return false;
                 return true;
             });
@@ -645,7 +683,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             }
 
             // Cắt bỏ sạch tiền tố thời gian khỏi commentText
-            commentText = commentText.replace(/^\s*\d+\s*(?:phút|giờ|ngày|tuần|tháng|năm|m|h|d|w|y|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*/i, '').trim();
+            commentText = commentText.replace(/^\s*\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)\s*(?:trước|ago)?\s*/i, '').trim();
             commentText = commentText.replace(/^\s*(?:vừa xong|just now|hôm qua|yesterday)\s*/i, '').trim();
             if (!commentText) {
                 commentText = ".";
@@ -693,10 +731,8 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             if (c.isPageReply || c.isOldComment) return false;
             if (!c.hasPageReply) return true;
             const mText = (c.msgBtnText || '').toLowerCase();
-            const tStr = (c.timeStr || '').toLowerCase();
-            const stillNeedsMsgBtn = mText.includes('gửi tin nhắn') || mText.includes('nhắn tin') || mText.includes('send message');
-            const isVeryRecent = /(?:vừa xong|just now|\b\d+\s*(?:giây|phút|giờ|s|m|h|mins?|hours?)\b)/i.test(tStr);
-            return stillNeedsMsgBtn || isVeryRecent;
+            const hasMsgBtn = mText.includes('gửi tin nhắn') || mText.includes('nhắn tin') || mText.includes('send message') || mText.includes('see chat') || mText.includes('xem đoạn chat') || !!c.msgBtnText;
+            return hasMsgBtn;
         });
 
         let target = null;
@@ -892,7 +928,7 @@ async def send_inbox_via_messenger_search(
             if clean_name.lower() in txt:
                 logger.info("Tìm thấy hội thoại của [%s] trong danh sách gần nhất!", clean_name)
                 # Click tại x=150, y=40 để mở chat an toàn, không bấm vào menu phụ
-                await item.click(position={"x": 150, "y": 40}, timeout=4000)
+                await safe_click(item, timeout=3000, position={"x": 150, "y": 40})
                 found_item = True
                 await human_sleep(2.0, 3.5)
                 break
@@ -902,7 +938,7 @@ async def send_inbox_via_messenger_search(
             search_box = page.locator('input[placeholder*="Tìm kiếm"], input[placeholder*="Search"]').first
             if await search_box.count() > 0 and await search_box.is_visible():
                 logger.info("Dùng ô tìm kiếm Messenger gõ tên: %s", clean_name)
-                await search_box.click()
+                await safe_click(search_box, timeout=2500)
                 await search_box.fill(clean_name)
                 await human_sleep(2.5, 4.0)
 
@@ -910,7 +946,7 @@ async def send_inbox_via_messenger_search(
                 if await result_items.count() > 0:
                     first_res = result_items.first
                     if await first_res.is_visible():
-                        await first_res.click(position={"x": 150, "y": 40}, timeout=4000)
+                        await safe_click(first_res, timeout=3000, position={"x": 150, "y": 40})
                         found_item = True
                         await human_sleep(2.0, 3.5)
 
@@ -1008,7 +1044,7 @@ async def send_private_inbox_to_commenter(
     if await marked_msg_btn.count() > 0 and await marked_msg_btn.is_visible():
         try:
             btn_text_lower = (await marked_msg_btn.inner_text() or "").lower()
-            await marked_msg_btn.click()
+            await safe_click(marked_msg_btn, timeout=2500)
             clicked_btn = True
             await human_sleep(2.0, 3.5)
         except Exception as e_mbtn:
@@ -1090,7 +1126,7 @@ async def send_private_inbox_to_commenter(
                     'button:has-text("Gửi"), button:has-text("Send")'
                 ).last
                 if await send_btn.count() > 0 and await send_btn.is_visible():
-                    await send_btn.click()
+                    await safe_click(send_btn, timeout=2500)
                 else:
                     await page.keyboard.press("Enter")
                 await human_sleep(2.0, 3.5)
@@ -1225,10 +1261,10 @@ async def process_facebook_comments_tab(
             preview_text = (await item.inner_text() or "").strip()
             # Bấm vào dòng bài viết tại position x=150, y=40 để mở chi tiết bình luận, tuyệt đối không bấm x=490 (nút xóa/menu)
             try:
-                await item.click(position={"x": 150, "y": 40}, timeout=4000)
+                await safe_click(item, timeout=3000, position={"x": 150, "y": 40})
             except Exception:
                 await dismiss_blocking_modals(page)
-                await item.click(position={"x": 150, "y": 40}, timeout=4000)
+                await safe_click(item, timeout=3000, position={"x": 150, "y": 40})
             await human_sleep(2.0, 3.5)
             current_post_url = page.url
 
@@ -1268,7 +1304,7 @@ async def process_facebook_comments_tab(
                         continue
 
                     # BỎ QUA 100% nếu bình luận cũ (tuần, tháng, năm hoặc > 3 ngày)
-                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand.get("time_str", ""), cand.get("innerPreview", "")):
+                    if cand.get("is_old_comment") or is_old_comment_timestamp(cand.get("time_str", "")):
                         logger.info("Bình luận cũ từ [%s] (Thời gian: '%s'). BỎ QUA 100%!", cand_author, cand.get("time_str", "") or cand.get("innerPreview", "")[:30])
                         continue
 
@@ -1289,7 +1325,7 @@ async def process_facebook_comments_tab(
                     # nhưng chưa được gửi tin nhắn riêng trong memory -> Bắt buộc nhắn 1 tin riêng cho khách!
                     if cand_has_reply and comment_key:
                         existing_rec = memory.data["replied_comments"].get(comment_key)
-                        if not existing_rec:
+                        if not existing_rec or not existing_rec.get("private_inbox_sent"):
                             target_candidate = cand
                             target_key = comment_key
                             needs_inbox_only = True
@@ -1368,7 +1404,7 @@ async def process_facebook_comments_tab(
                     like_btn = target_art.locator('div[role="button"]:has-text("Thích"), div[role="button"]:has-text("Like")').first
                     if await like_btn.count() > 0 and await like_btn.is_visible():
                         try:
-                            await like_btn.click(timeout=2000)
+                            await safe_click(like_btn, timeout=2000)
                             await human_sleep(0.8, 1.5)
                         except Exception:
                             pass
@@ -1378,8 +1414,7 @@ async def process_facebook_comments_tab(
                 marked_reply_btn = page.locator('[data-dan86-reply-btn="true"]').first
                 if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
                     try:
-                        await marked_reply_btn.click(timeout=2500)
-                        reply_clicked = True
+                        reply_clicked = await safe_click(marked_reply_btn, timeout=2500)
                         await human_sleep(1.2, 2.2)
                     except Exception as e_reply:
                         logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
@@ -1394,8 +1429,7 @@ async def process_facebook_comments_tab(
                     ).first
                     if await reply_btn.count() > 0 and await reply_btn.is_visible():
                         try:
-                            await reply_btn.click(timeout=2500)
-                            reply_clicked = True
+                            reply_clicked = await safe_click(reply_btn, timeout=2500)
                             await human_sleep(1.2, 2.2)
                         except Exception as e_reply:
                             logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
@@ -1547,11 +1581,12 @@ async def inspect_messenger_conversation(page: Page) -> Dict[str, Any]:
             }
         }
 
-        // Tìm tất cả các bong bóng tin nhắn trong khung chat (x: 380..1120, y: 120..840)
+        // Tìm tất cả các bong bóng tin nhắn trong khung chat (x: 380..1120, y: 120..885), loại trừ ô soạn tin
         const chatNodes = Array.from(document.querySelectorAll('[dir="auto"], [role="row"]'))
             .filter(el => {
+                if (el.closest('[role="textbox"], textarea, input')) return false;
                 const r = el.getBoundingClientRect();
-                return r.left > 380 && r.right < 1120 && r.top > 120 && r.bottom < 840 && r.height >= 16;
+                return r.left > 380 && r.right < 1120 && r.top > 120 && r.bottom < 885 && r.height >= 16;
             });
 
         const messages = [];
@@ -1657,9 +1692,9 @@ async def process_messenger_inbox_tab(
                 continue
 
             try:
-                await item.click(position={"x": 150, "y": 40}, timeout=4000)
+                await safe_click(item, timeout=3000, position={"x": 150, "y": 40})
             except Exception:
-                await item.click(timeout=4000)
+                await safe_click(item, timeout=3000)
             await human_sleep(2.0, 3.5)
 
             conv = await inspect_messenger_conversation(page)
