@@ -501,6 +501,14 @@ async def type_human_like(page: Page, locator: Locator, text: str) -> None:
     await click_element_at_physical_coordinates(page, locator, timeout_ms=2500)
     await human_sleep(0.4, 0.9)
 
+    # Xóa sạch bất kỳ văn bản cũ hoặc gợi ý có sẵn trước khi gõ
+    try:
+        await page.keyboard.press("Control+A")
+        await page.keyboard.press("Backspace")
+        await asyncio.sleep(0.1)
+    except Exception:
+        pass
+
     lines = text.split("\n")
     for idx, line in enumerate(lines):
         if line:
@@ -1004,9 +1012,19 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             const lowerInner = inner.toLowerCase();
 
             // Kiểm tra xem article này là phản hồi của chính Fanpage
-            const isPageReply = lowerAria.includes("dưới tên dần86farm") ||
-                                lowerAria.includes("dưới tên dan86") ||
-                                pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\n") || lowerInner.includes("tác giả\n" + p));
+            let isPageReply = lowerAria.includes("dưới tên dần86farm") ||
+                              lowerAria.includes("dưới tên dan86") ||
+                              pageNames.some(p => lowerInner.startsWith(p) || lowerInner.includes(p + "\n") || lowerInner.includes("tác giả\n" + p));
+
+            // ĐẶC BIỆT: Nếu phản hồi này chỉ là câu hệ thống tự động của Facebook (như 'Đã gửi tin nhắn cho bạn!' hoặc 'Shop Dan86 chào bạn'),
+            // TUYỆT ĐỐI KHÔNG tính là đã phản hồi thật sự! Bot phải tiếp tục vào trả lời đầy đủ thông tin + website!
+            const isGenericSystemReply = lowerInner.includes("đã gửi tin nhắn cho bạn") ||
+                                         lowerInner.includes("shop dan86 chào bạn") ||
+                                         lowerInner.includes("sent a message to you") ||
+                                         lowerInner.includes("đã gửi tin nhắn");
+            if (isGenericSystemReply) {
+                isPageReply = false;
+            }
 
             // Trích xuất tên tác giả
             let authorName = "";
@@ -1619,6 +1637,14 @@ async def send_private_inbox_to_commenter(
                 box_holder = (await dialog_box.get_attribute("placeholder") or "").lower()
                 # Kiểm tra nghiêm ngặt: Tuyệt đối không được là ô bình luận hoặc trả lời bài viết
                 if not any(k in box_aria or k in box_holder for k in ["bình luận", "comment", "phản hồi", "trả lời", "reply"]):
+                    # Xóa sạch mọi văn bản mặc định / template cũ của Facebook trong ô nhập (nếu có)
+                    try:
+                        await dialog_box.click()
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await human_sleep(0.2, 0.4)
+                    except Exception:
+                        pass
                     await type_human_like(page, dialog_box, private_reply_text)
                     send_btn = dialog.locator(
                         '[aria-label*="Gửi"], [aria-label*="Send"], '
