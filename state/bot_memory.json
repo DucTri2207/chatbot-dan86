@@ -365,14 +365,6 @@
       "last_bot_reply_ts": 1791727016.6887603,
       "source": "comment_private_reply"
     },
-    "name:đức trí": {
-      "customer_name": "Đức Trí",
-      "stage": 1,
-      "last_replied_customer_msg": "set quà 450k",
-      "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
-      "last_bot_reply_ts": 1791795799.0762942,
-      "last_interaction_ts": 1791800194.6846871
-    },
     "tid:100007295343728": {
       "customer_name": "Baochau Haphan",
       "stage": 1,
@@ -408,6 +400,14 @@
       "last_replied_customer_msg": "khoa voi gia sao shpp",
       "last_bot_reply_ts": 1791784759.5862067,
       "source": "comment_private_reply"
+    },
+    "name:đức trí": {
+      "customer_name": "Đức Trí",
+      "stage": 1,
+      "last_replied_customer_msg": "set quà 450k",
+      "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
+      "last_bot_reply_ts": 1791795799.0762942,
+      "last_interaction_ts": 1791800194.6846871
     }
   },
   "stats": {
