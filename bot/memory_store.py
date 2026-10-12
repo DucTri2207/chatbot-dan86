@@ -367,7 +367,12 @@ class BotMemoryStore:
         # 4. Kiểm tra trong bộ nhớ:
         # 4.1 Khóa định danh duy nhất của bình luận này đã nằm trong replied_comments
         if key in self.data["replied_comments"]:
-            return False, key
+            rec = self.data["replied_comments"][key]
+            p_reply = str(rec.get("public_reply", ""))
+            if (p_reply.startswith("(Bỏ qua") or p_reply.startswith("(Đã phản hồi")) and not has_page_reply_in_dom:
+                pass
+            else:
+                return False, key
 
         # 4.2 Kiểm tra nếu bình luận này đã được rep trước đó trên cùng bài viết (tránh lệch key khi dom_index thay đổi)
         existing_rec = self.get_comment_record(
@@ -377,7 +382,11 @@ class BotMemoryStore:
             post_id=post_id,
         )
         if existing_rec is not None:
-            return False, key
+            p_reply = str(existing_rec.get("public_reply", ""))
+            if (p_reply.startswith("(Bỏ qua") or p_reply.startswith("(Đã phản hồi")) and not has_page_reply_in_dom:
+                pass
+            else:
+                return False, key
 
         # 5. Cooldown chống spam cấp độ khách hàng (nếu được kích hoạt)
         current_time = now_ts if now_ts is not None else time.time()

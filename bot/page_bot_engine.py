@@ -1443,7 +1443,7 @@ async def locate_nested_reply_box(
             aria = (await cand.get_attribute("aria-label") or "").lower()
             placeholder = (await cand.get_attribute("placeholder") or "").lower()
             combo = f"{aria} {placeholder}"
-            if ("bình luận công khai" in combo or "bình luận dưới tên" in combo or "viết bình luận" in combo) and not any(
+            if "bình luận công khai" in combo and not any(
                 k in combo for k in ["trả lời", "câu trả lời", "phản hồi", "reply"]
             ):
                 logger.debug("Bỏ qua ô nhập vì là ô bình luận bài viết cấp 1: %s", combo)
