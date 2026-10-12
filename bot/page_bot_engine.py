@@ -700,8 +700,14 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         const isReplyBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a).trim();
+            if (combo.includes('xem') || combo.includes('ẩn') || combo.includes('view') || combo.includes('hide')) {
+                return false;
+            }
             return t === 'trả lời' || t === 'reply' || t === 'phản hồi' ||
-                   a.includes('trả lời') || a.includes('reply') || a.includes('phản hồi');
+                   a === 'trả lời' || a === 'reply' || a === 'phản hồi' ||
+                   a.startsWith('trả lời') || a.startsWith('reply') || a.startsWith('phản hồi') ||
+                   a.includes('trả lời bình luận') || a.includes('reply to comment') || a.includes('phản hồi bình luận');
         };
 
         const isMsgBtn = (el) => {
@@ -884,14 +890,16 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
 
         if (targetArticleNode) {
             targetArticleNode.setAttribute('data-dan86-reply-target', 'true');
-            const candidateEls = Array.from(targetArticleNode.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
-            if (candidateEls.length === 0) {
-                candidateEls.push(...Array.from(targetArticleNode.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
-            }
+            const candidateEls = Array.from(targetArticleNode.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"], span, div'));
             const rBtn = candidateEls.find(isReplyBtn);
             if (rBtn) {
                 const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
-                clickNode.setAttribute('data-dan86-reply-btn', 'true');
+                const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '')).toLowerCase();
+                if (!clickCombo.includes('xem') && !clickCombo.includes('ẩn') && !clickCombo.includes('view') && !clickCombo.includes('hide')) {
+                    clickNode.setAttribute('data-dan86-reply-btn', 'true');
+                } else {
+                    rBtn.setAttribute('data-dan86-reply-btn', 'true');
+                }
             }
             const mBtn = candidateEls.find(isMsgBtn);
             if (mBtn) {
@@ -986,13 +994,22 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
 
         if (idx < 0 || idx >= allArticles.length) return false;
         const target = allArticles[idx];
+        try {
+            target.scrollIntoView({ behavior: 'instant', block: 'center' });
+        } catch (_) {}
         target.setAttribute('data-dan86-reply-target', 'true');
 
         const isReplyBtn = (el) => {
             const t = (el.innerText || '').trim().toLowerCase();
             const a = (el.getAttribute('aria-label') || '').trim().toLowerCase();
+            const combo = (t + ' ' + a).trim();
+            if (combo.includes('xem') || combo.includes('ẩn') || combo.includes('view') || combo.includes('hide')) {
+                return false;
+            }
             return t === 'trả lời' || t === 'reply' || t === 'phản hồi' ||
-                   a.includes('trả lời') || a.includes('reply') || a.includes('phản hồi');
+                   a === 'trả lời' || a === 'reply' || a === 'phản hồi' ||
+                   a.startsWith('trả lời') || a.startsWith('reply') || a.startsWith('phản hồi') ||
+                   a.includes('trả lời bình luận') || a.includes('reply to comment') || a.includes('phản hồi bình luận');
         };
 
         const isMsgBtn = (el) => {
@@ -1004,14 +1021,16 @@ async def tag_comment_target_in_dom(page: Page, dom_index: int) -> bool:
                    combo.includes('tin nhắn') || combo.includes('message') || combo.includes('chat');
         };
 
-        const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"]'));
-        if (candidateEls.length === 0) {
-            candidateEls.push(...Array.from(target.querySelectorAll('span, div')).filter(el => el.children.length === 0 && (el.innerText || '').trim().length <= 30));
-        }
+        const candidateEls = Array.from(target.querySelectorAll('button, [role="button"], a[role="link"], a, [role="tab"], span, div'));
         const rBtn = candidateEls.find(isReplyBtn);
         if (rBtn) {
             const clickNode = rBtn.closest('button, [role="button"], a') || rBtn;
-            clickNode.setAttribute('data-dan86-reply-btn', 'true');
+            const clickCombo = ((clickNode.innerText || '') + ' ' + (clickNode.getAttribute('aria-label') || '')).toLowerCase();
+            if (!clickCombo.includes('xem') && !clickCombo.includes('ẩn') && !clickCombo.includes('view') && !clickCombo.includes('hide')) {
+                clickNode.setAttribute('data-dan86-reply-btn', 'true');
+            } else {
+                rBtn.setAttribute('data-dan86-reply-btn', 'true');
+            }
         }
 
         const mBtn = candidateEls.find(isMsgBtn);
@@ -1345,6 +1364,134 @@ async def send_private_inbox_to_commenter(
     return False
 
 
+async def locate_nested_reply_box(
+    page: Page,
+    target_art: Optional[Locator],
+    timeout_seconds: float = 2.5,
+) -> Optional[Locator]:
+    """
+    Định vị ô nhập phản hồi lồng nhau cấp 2 độc quyền cho target_art.
+    BẮT BUỘC ô nhập này phải có quan hệ hình học và DOM trực tiếp với target_art:
+    - Ưu tiên 1: target_art.locator('xpath=following::div[@role="textbox"][1]') hoặc target_art.locator('div[role="textbox"]')
+    - Ưu tiên 2: Element đang :focus (document.activeElement) NHƯNG PHẢI nằm trong phạm vi dọc gần target_art:
+      (bounding box Y: box_y >= target_y - 10 và box_y <= target_y + target_h + 250)
+    CẤM TUYỆT ĐỐI việc dùng selector toàn cục page.locator('div:has-text("Trả lời với vai trò") div[role="textbox"]')
+    bắt nhầm ô bình luận bài viết ở đáy trang.
+    """
+    if target_art is None:
+        logger.warning("target_art không tồn tại (None) để định vị ô reply lồng nhau.")
+        return None
+
+    try:
+        if await target_art.count() == 0:
+            logger.warning("target_art không có phần tử DOM nào tương ứng.")
+            return None
+    except Exception as e:
+        logger.warning("Lỗi kiểm tra target_art: %s", e)
+        return None
+
+    try:
+        await target_art.scroll_into_view_if_needed(timeout=2000)
+    except Exception:
+        pass
+
+    art_box = await target_art.bounding_box()
+    if not art_box:
+        logger.warning("Không thể lấy bounding box của target_art.")
+        return None
+
+    async def is_valid_nested_candidate(cand: Locator) -> bool:
+        try:
+            if await cand.count() == 0 or not await cand.is_visible():
+                return False
+            cand_box = await cand.bounding_box()
+            if not cand_box:
+                return False
+
+            # Bounding box của comment article hiện tại
+            cur_art_box = await target_art.bounding_box()
+            if not cur_art_box:
+                return False
+
+            t_y = cur_art_box["y"]
+            t_h = cur_art_box["height"]
+            t_x = cur_art_box["x"]
+
+            box_y = cand_box["y"]
+            box_h = cand_box["height"]
+            box_x = cand_box["x"]
+
+            # 1. Quan hệ hình học dọc: BẮT BUỘC nằm sát bên dưới target_art
+            # box_y >= target_y - 10 và box_y <= target_y + target_h + 250
+            if not (t_y - 10 <= box_y <= t_y + t_h + 250):
+                return False
+            if box_h < 12:
+                return False
+
+            # 2. Quan hệ hình học ngang: Cùng cột với comment article (cho phép thụt lề phải)
+            if box_x < t_x - 50 or abs(box_x - t_x) > 300:
+                return False
+
+            # 3. Kiểm tra tính năng gõ chữ (contentEditable hoặc input/textarea/role=textbox)
+            is_edit = await cand.evaluate(
+                "el => el.isContentEditable || el.getAttribute('role') === 'textbox' || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'"
+            )
+            if not is_edit:
+                return False
+
+            # 4. Fail-safe Guard: Loại trừ ô bình luận cấp 1 của bài viết ở đáy trang
+            aria = (await cand.get_attribute("aria-label") or "").lower()
+            placeholder = (await cand.get_attribute("placeholder") or "").lower()
+            combo = f"{aria} {placeholder}"
+            if ("bình luận công khai" in combo or "bình luận dưới tên" in combo or "viết bình luận" in combo) and not any(
+                k in combo for k in ["trả lời", "câu trả lời", "phản hồi", "reply"]
+            ):
+                logger.debug("Bỏ qua ô nhập vì là ô bình luận bài viết cấp 1: %s", combo)
+                return False
+
+            return True
+        except Exception:
+            return False
+
+    start_time = time.time()
+    while time.time() - start_time < timeout_seconds:
+        # Ưu tiên 1A: Ô textbox nằm ngay sau target_art (following XPath)
+        following_box = target_art.locator('xpath=following::div[@role="textbox"][1]').first
+        if await is_valid_nested_candidate(following_box):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: following role=textbox).")
+            return following_box
+
+        following_edit = target_art.locator('xpath=following::div[@contenteditable="true"][1]').first
+        if await is_valid_nested_candidate(following_edit):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: following contenteditable).")
+            return following_edit
+
+        # Ưu tiên 1B: Ô textbox nằm ngay bên trong target_art
+        inside_box = target_art.locator('div[role="textbox"], div[contenteditable="true"]').first
+        if await is_valid_nested_candidate(inside_box):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 1: inside target_art).")
+            return inside_box
+
+        # Ưu tiên 2: Element đang :focus (document.activeElement) có quan hệ hình học sát target_art
+        focused_el = page.locator('div[role="textbox"]:focus, div[contenteditable="true"]:focus, :focus').first
+        if await is_valid_nested_candidate(focused_el):
+            logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 2: :focus activeElement).")
+            return focused_el
+
+        # Ưu tiên 3: Quét các textbox đang hiển thị nằm trong phạm vi hình học gần target_art
+        near_boxes = page.locator('div[role="textbox"], div[contenteditable="true"]')
+        near_count = min(await near_boxes.count(), 10)
+        for nb_idx in range(near_count):
+            cand_nb = near_boxes.nth(nb_idx)
+            if await is_valid_nested_candidate(cand_nb):
+                logger.info("Tìm thấy ô nested reply lồng nhau (Ưu tiên 3: near geometric match #%d).", nb_idx)
+                return cand_nb
+
+        await asyncio.sleep(0.3)
+
+    return None
+
+
 async def process_facebook_comments_tab(
     page: Page,
     memory: BotMemoryStore,
@@ -1591,90 +1738,54 @@ async def process_facebook_comments_tab(
                 if await marked_reply_btn.count() > 0 and await marked_reply_btn.is_visible():
                     try:
                         reply_clicked = await safe_click(marked_reply_btn, timeout=2500)
-                        await human_sleep(1.2, 2.2)
                     except Exception as e_reply:
                         logger.debug("Lỗi bấm nút Trả lời đánh dấu: %s", e_reply)
 
                 if not reply_clicked and target_art is not None:
-                    reply_btn = target_art.locator(
-                        'div[role="button"]:has-text("Trả lời"), '
-                        'span:has-text("Trả lời"), '
-                        'div[role="button"]:has-text("Phản hồi"), '
-                        'span:has-text("Phản hồi"), '
-                        'div[role="button"]:has-text("Reply")'
-                    ).first
-                    if await reply_btn.count() > 0 and await reply_btn.is_visible():
-                        try:
-                            reply_clicked = await safe_click(reply_btn, timeout=2500)
-                            await human_sleep(1.2, 2.2)
-                        except Exception as e_reply:
-                            logger.warning("Lỗi bấm nút Trả lời trong comment article: %s", e_reply)
-
-                # Tìm ô nhập phản hồi lồng nhau cấp 2 (nested reply box)
-                nested_box = page.locator('div[role="textbox"]:focus, div[contenteditable="true"]:focus').first
-                if await nested_box.count() == 0 or not await nested_box.is_visible():
-                    nested_box = page.locator(
-                        'div:has-text("Trả lời với vai trò") div[role="textbox"], '
-                        'div:has-text("Reply as") div[role="textbox"], '
-                        'div:has-text("Viết câu trả lời") div[role="textbox"], '
-                        'div:has-text("Viết phản hồi") div[role="textbox"]'
-                    ).last
-
-                if await nested_box.count() == 0 or not await nested_box.is_visible():
-                    nested_box = page.locator(
-                        'div[role="textbox"][aria-label*="Trả lời với vai trò"], '
-                        'div[role="textbox"][aria-label*="Reply as"], '
-                        'div[role="textbox"][aria-label*="Viết câu trả lời"], '
-                        'div[role="textbox"][aria-label*="Viết phản hồi"]'
-                    ).first
-
-                if (await nested_box.count() == 0 or not await nested_box.is_visible()) and target_art is not None:
-                    # Tìm ô textbox nằm trong hoặc nằm ngay liền sau comment article vừa bấm
-                    following_box = target_art.locator('xpath=following::div[@role="textbox"][1]').first
-                    if await following_box.count() > 0 and await following_box.is_visible():
-                        nested_box = following_box
-                    else:
-                        nested_box = target_art.locator('div[role="textbox"]').first
-
-                # Nếu trình duyệt đang active focus vào bất kỳ contenteditable/textarea nào
-                if await nested_box.count() == 0 or not await nested_box.is_visible():
-                    focus_el = page.locator(':focus').first
-                    if await focus_el.count() > 0:
-                        try:
-                            is_edit = await focus_el.evaluate("el => el.isContentEditable || el.tagName === 'TEXTAREA' || el.tagName === 'INPUT'")
-                            if is_edit:
-                                nested_box = focus_el
-                        except Exception:
-                            pass
-
-                is_valid_nested_box = False
-                if await nested_box.count() > 0 and await nested_box.is_visible():
-                    box_aria = (await nested_box.get_attribute("aria-label") or "").lower()
-                    box_placeholder = (await nested_box.get_attribute("placeholder") or "").lower()
-                    is_post_level_box = (
-                        not reply_clicked
-                        and ("bình luận công khai" in box_aria or "bình luận dưới tên" in box_aria or "viết bình luận" in box_placeholder)
-                        and ("trả lời" not in box_aria and "reply" not in box_aria and "phản hồi" not in box_aria)
-                    )
-                    if is_post_level_box:
-                        logger.warning("Phát hiện ô bình luận bài viết cấp 1 (chưa bấm Trả lời)! Bỏ qua để không đăng nhầm cmt cấp 1!")
-                        is_valid_nested_box = False
-                    else:
-                        is_valid_nested_box = True
-
-                if is_valid_nested_box:
-                    if TEST_ONLY_AUTHOR_WHITELIST:
-                        c_norm = normalize_text(cand_author)
-                        if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
-                            logger.info("Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).", cand_author)
+                    # Tìm chính xác nút 'Trả lời' / 'Reply' / 'Phản hồi' nằm BÊN TRONG comment article của khách
+                    cand_buttons = target_art.locator('div[role="button"], button, a, span')
+                    b_count = min(await cand_buttons.count(), 20)
+                    for b_idx in range(b_count):
+                        b_el = cand_buttons.nth(b_idx)
+                        if not await b_el.is_visible():
                             continue
+                        b_text = (await b_el.inner_text() or "").strip().lower()
+                        b_aria = (await b_el.get_attribute("aria-label") or "").strip().lower()
+                        b_combo = f"{b_text} {b_aria}"
+                        if any(bad in b_combo for bad in ["xem", "ẩn", "view", "hide"]):
+                            continue
+                        if (
+                            b_text in ["trả lời", "reply", "phản hồi"]
+                            or b_aria in ["trả lời", "reply", "phản hồi"]
+                            or b_aria.startswith("trả lời")
+                            or "trả lời bình luận" in b_aria
+                            or "reply to comment" in b_aria
+                        ):
+                            try:
+                                reply_clicked = await safe_click(b_el, timeout=2500)
+                                if reply_clicked:
+                                    logger.info("Đã bấm nút Trả lời trong comment article.")
+                                    break
+                            except Exception as e_b:
+                                logger.debug("Lỗi bấm nút Trả lời dự phòng: %s", e_b)
 
-                    await type_human_like(page, nested_box, public_reply)
-                    await page.keyboard.press("Enter")
-                    await human_sleep(2.5, 4.0)
-                    logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: %s).", cand_author, reply_clicked)
+                # Chờ 1.0 - 2.0 giây để DOM chèn ô nhập phản hồi lồng nhau
+                if reply_clicked:
+                    await human_sleep(1.2, 2.0)
+                else:
+                    await human_sleep(0.8, 1.2)
 
-                    # Bước 3: Tự động gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
+                # Định vị ô nhập phản hồi lồng nhau cấp 2 độc quyền cho target_art
+                nested_box = await locate_nested_reply_box(page, target_art, timeout_seconds=2.5)
+
+                # Cơ chế Bảo vệ Chống Đăng Nhầm Ra Ngoài (Fail-safe Guard):
+                # Nếu KHÔNG tìm thấy ô reply lồng nhau hợp lệ nằm sát bên dưới target_art, TUYỆT ĐỐI KHÔNG GÕ VÀO Ô BÌNH LUẬN BÀI VIẾT!
+                if nested_box is None:
+                    logger.warning(
+                        "Không tìm thấy ô nested reply lồng nhau hợp lệ gần bình luận của [%s], hủy cmt để chống đăng nhầm ra ngoài bài viết!",
+                        cand_author,
+                    )
+                    # Hủy bỏ bước rep công khai, chỉ gửi tin nhắn riêng Messenger
                     inbox_sent = await send_private_inbox_to_commenter(
                         page=page,
                         post_url=current_post_url,
@@ -1685,31 +1796,71 @@ async def process_facebook_comments_tab(
                         dry_run=dry_run,
                     )
 
-                    # Lưu vào bộ nhớ với khóa định danh kết hợp post_id + dom_index
                     memory.mark_comment_replied(
                         comment_key=target_key,
                         author_name=cand_author,
                         comment_text=cand_text,
-                        public_reply=public_reply,
+                        public_reply="(Bỏ qua cmt công khai - Không tìm thấy ô lồng nhau)",
                         private_inbox_sent=inbox_sent,
                         private_reply_text=private_inbox_reply,
                         post_id=post_id,
                         dom_index=cand_idx,
                     )
                     replied_count += 1
-
-                    # Đảm bảo trở lại đúng bài viết đang mở nếu URL bị đổi
                     if page.url != current_post_url:
                         try:
                             await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
                             await human_sleep(2.0, 3.5)
                         except Exception:
                             pass
-
                     await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
-                else:
-                    logger.warning("Không tìm thấy ô nhập nested reply hợp lệ cho bình luận của [%s].", cand_author)
-                    break
+                    continue
+
+                # Nếu tìm thấy ô nested reply lồng nhau hợp lệ:
+                if TEST_ONLY_AUTHOR_WHITELIST:
+                    c_norm = normalize_text(cand_author)
+                    if not any(w in c_norm for w in TEST_ONLY_AUTHOR_WHITELIST):
+                        logger.info("Chế độ thử nghiệm an toàn: Bỏ qua gửi cmt công khai cho [%s] (Chỉ tương tác với Đức Trí).", cand_author)
+                        continue
+
+                await type_human_like(page, nested_box, public_reply)
+                await page.keyboard.press("Enter")
+                await human_sleep(2.5, 4.0)
+                logger.info("Đã gửi phản hồi bình luận công khai cho [%s] (Nested Reply: True).", cand_author)
+
+                # Bước 3: Tự động gửi tin nhắn riêng (Private Reply) cho người vừa bình luận
+                inbox_sent = await send_private_inbox_to_commenter(
+                    page=page,
+                    post_url=current_post_url,
+                    author_name=cand_author,
+                    private_reply_text=private_inbox_reply,
+                    comment_text=cand_text,
+                    dom_index=cand_idx,
+                    dry_run=dry_run,
+                )
+
+                # Lưu vào bộ nhớ với khóa định danh kết hợp post_id + dom_index
+                memory.mark_comment_replied(
+                    comment_key=target_key,
+                    author_name=cand_author,
+                    comment_text=cand_text,
+                    public_reply=public_reply,
+                    private_inbox_sent=inbox_sent,
+                    private_reply_text=private_inbox_reply,
+                    post_id=post_id,
+                    dom_index=cand_idx,
+                )
+                replied_count += 1
+
+                # Đảm bảo trở lại đúng bài viết đang mở nếu URL bị đổi
+                if page.url != current_post_url:
+                    try:
+                        await page.goto(current_post_url, wait_until="domcontentloaded", timeout=45000)
+                        await human_sleep(2.0, 3.5)
+                    except Exception:
+                        pass
+
+                await human_sleep(ACTION_COOLDOWN_SECONDS[0], ACTION_COOLDOWN_SECONDS[1])
 
         except Exception as e:
             logger.warning("Lỗi khi xử lý bình luận thứ %d: %s", i, e)
