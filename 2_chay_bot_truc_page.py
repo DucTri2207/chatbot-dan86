@@ -33,6 +33,7 @@ from bot.auth_helper import sync_facebook_credentials_from_dan86
 from bot.bot_config import (
     BOT_STATUS_FILE,
     LOGS_DIR,
+    META_INBOX_COMMENTS_URL,
     SCAN_INTERVAL_SECONDS,
     STATE_DIR,
     STORAGE_STATE_FILE,
@@ -42,6 +43,7 @@ from bot.page_bot_engine import (
     create_bot_browser_context,
     process_facebook_comments_tab,
     process_messenger_inbox_tab,
+    verify_logged_in,
 )
 
 
@@ -201,25 +203,47 @@ async def run_bot_loop(
         )
         page = context.pages[0] if context.pages else await context.new_page()
 
+        # Bước 0: Làm ấm phiên đăng nhập Facebook và xác thực SSO trước khi bắt đầu quét
+        logger.info("Đang kiểm tra và làm ấm phiên đăng nhập Facebook...")
+        try:
+            await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(2.0)
+            logger.info("Đã kết nối máy chủ Facebook. Đang mở Meta Business Suite...")
+            await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(3.0)
+            logged_in_ok = await verify_logged_in(page)
+            logger.info("Kết quả xác thực khởi động Meta Business Suite: %s (URL: %s)", logged_in_ok, page.url)
+        except Exception as e_init:
+            logger.warning("Cảnh báo khi làm ấm phiên khởi động: %s", e_init)
+
         cycle = 0
         try:
             while True:
                 cycle += 1
                 logger.info("--- Bắt đầu chu kỳ quét #%d ---", cycle)
+                cmt_replied = 0
+                inbox_replied = 0
 
-                # 1. Quét Tab Bình luận Facebook (Rep cmt random + Tự động Inbox người cmt)
-                cmt_replied = await process_facebook_comments_tab(
-                    page=page,
-                    memory=memory,
-                    dry_run=dry_run,
-                )
+                try:
+                    # 1. Quét Tab Bình luận Facebook (Rep cmt random + Tự động Inbox người cmt)
+                    cmt_replied = await process_facebook_comments_tab(
+                        page=page,
+                        memory=memory,
+                        dry_run=dry_run,
+                    )
 
-                # 2. Quét Tab Messenger Inbox (Lần 1 chào random / Lần 2 báo đợi nhân viên random)
-                inbox_replied = await process_messenger_inbox_tab(
-                    page=page,
-                    memory=memory,
-                    dry_run=dry_run,
-                )
+                    # 2. Quét Tab Messenger Inbox (Lần 1 chào random / Lần 2 báo đợi nhân viên random)
+                    inbox_replied = await process_messenger_inbox_tab(
+                        page=page,
+                        memory=memory,
+                        dry_run=dry_run,
+                    )
+                except Exception as e_cycle:
+                    logger.error("Lỗi trong chu kỳ quét #%d: %s. Đang tự động hồi phục...", cycle, e_cycle)
+                    try:
+                        await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
+                    except Exception:
+                        pass
 
                 logger.info(
                     "Hoàn tất chu kỳ #%d: Đã xử lý %d bình luận & %d tin nhắn Inbox. Tổng thống kê: %s",

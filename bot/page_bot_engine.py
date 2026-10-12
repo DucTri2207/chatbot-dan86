@@ -283,40 +283,57 @@ async def verify_logged_in(page: Page) -> bool:
             if await loc.count() > 0 and await loc.is_visible():
                 logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
                 try:
-                    async with page.context.expect_page(timeout=8000) as pinfo:
-                        await loc.click()
-                    popup = await pinfo.value
-                    await popup.wait_for_load_state("domcontentloaded")
-                    p_btn = popup.locator(
-                        'div[role="button"]:has-text("Tiếp tục"), '
-                        'button:has-text("Tiếp tục"), '
-                        'div:has-text("Tiếp tục"), '
-                        'a:has-text("Tiếp tục")'
-                    ).last
-                    if await p_btn.count() > 0 and await p_btn.is_visible():
-                        await p_btn.click()
+                    popup_future = asyncio.get_event_loop().create_future()
+                    def on_sso_page(new_p):
+                        if not popup_future.done():
+                            popup_future.set_result(new_p)
+                    page.context.on("page", on_sso_page)
+
+                    await loc.click()
                     try:
-                        await popup.wait_for_event("close", timeout=8000)
-                    except Exception:
-                        pass
+                        popup = await asyncio.wait_for(popup_future, timeout=12.0)
+                        await popup.wait_for_load_state("domcontentloaded")
+                        await asyncio.sleep(1.5)
+
+                        p_btn = popup.locator(
+                            'div[role="button"]:has-text("Tiếp tục"), '
+                            'button:has-text("Tiếp tục"), '
+                            'div:has-text("Tiếp tục"), '
+                            'a:has-text("Tiếp tục"), '
+                            '[aria-label*="Tiếp tục"], '
+                            'div[role="button"]:has-text("Continue"), '
+                            'button:has-text("Continue")'
+                        ).first
+                        if await p_btn.count() > 0:
+                            await p_btn.click()
+                        else:
+                            txt_loc = popup.locator('text="Tiếp tục"').first
+                            if await txt_loc.count() > 0:
+                                await txt_loc.click()
+
+                        try:
+                            await popup.wait_for_event("close", timeout=10000)
+                        except Exception:
+                            pass
+                    except Exception as e_pop:
+                        logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
+
                     clicked = True
                     break
-                except Exception:
-                    try:
-                        await loc.click()
-                        await page.wait_for_load_state("domcontentloaded")
-                        clicked = True
-                        break
-                    except Exception as e_click:
-                        logger.debug("Lỗi bấm nút SSO: %s", e_click)
+                except Exception as e_click:
+                    logger.debug("Lỗi bấm nút SSO: %s", e_click)
 
         if clicked:
-            await human_sleep(3.0, 5.0)
+            # Chờ trang chính chuyển hướng khỏi login (tối đa 15s)
+            for _ in range(15):
+                await asyncio.sleep(1.0)
+                if "login" not in page.url.lower():
+                    break
             url = page.url.lower()
             if "login" in url:
                 try:
                     await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
-                    await human_sleep(3.0, 4.0)
+                    await human_sleep(2.0, 3.5)
                     url = page.url.lower()
                 except Exception:
                     pass
@@ -1119,38 +1136,48 @@ async def send_private_inbox_to_commenter(
         if await dialog.is_visible():
             dialog_box = dialog.locator('div[role="textbox"][contenteditable="true"], textarea').first
             if await dialog_box.count() > 0 and await dialog_box.is_visible():
-                await type_human_like(page, dialog_box, private_reply_text)
-                send_btn = dialog.locator(
-                    '[aria-label*="Gửi"], [aria-label*="Send"], '
-                    'div[role="button"]:has-text("Gửi"), div[role="button"]:has-text("Send"), '
-                    'button:has-text("Gửi"), button:has-text("Send")'
-                ).last
-                if await send_btn.count() > 0 and await send_btn.is_visible():
-                    await safe_click(send_btn, timeout=2500)
+                box_aria = (await dialog_box.get_attribute("aria-label") or "").lower()
+                box_holder = (await dialog_box.get_attribute("placeholder") or "").lower()
+                # Kiểm tra nghiêm ngặt: Tuyệt đối không được là ô bình luận hoặc trả lời bài viết
+                if not any(k in box_aria or k in box_holder for k in ["bình luận", "comment", "phản hồi", "trả lời", "reply"]):
+                    await type_human_like(page, dialog_box, private_reply_text)
+                    send_btn = dialog.locator(
+                        '[aria-label*="Gửi"], [aria-label*="Send"], '
+                        'div[role="button"]:has-text("Gửi"), div[role="button"]:has-text("Send"), '
+                        'button:has-text("Gửi"), button:has-text("Send")'
+                    ).last
+                    if await send_btn.count() > 0 and await send_btn.is_visible():
+                        await safe_click(send_btn, timeout=2500)
+                    else:
+                        await page.keyboard.press("Enter")
+                    await human_sleep(2.0, 3.5)
+                    # Đóng dialog nếu còn hiển thị
+                    close_btn = dialog.locator('[aria-label*="Đóng"], [aria-label*="Close"], button:has-text("Đóng"), button:has-text("Close")').first
+                    if await close_btn.count() > 0 and await close_btn.is_visible():
+                        try:
+                            await close_btn.click(timeout=1500)
+                        except Exception:
+                            pass
+                    await dismiss_blocking_modals(page)
+                    logger.info("Đã gửi tin nhắn riêng cho [%s] qua Popup Modal thành công!", author_name)
+                    return True
                 else:
-                    await page.keyboard.press("Enter")
-                await human_sleep(2.0, 3.5)
-                # Đóng dialog nếu còn hiển thị
-                close_btn = dialog.locator('[aria-label*="Đóng"], [aria-label*="Close"], button:has-text("Đóng"), button:has-text("Close")').first
-                if await close_btn.count() > 0 and await close_btn.is_visible():
-                    try:
-                        await close_btn.click(timeout=1500)
-                    except Exception:
-                        pass
-                await dismiss_blocking_modals(page)
-                logger.info("Đã gửi tin nhắn riêng cho [%s] qua Popup Modal thành công!", author_name)
-                return True
+                    logger.warning("Dialog hiện tại là ô bình luận bài viết, bỏ qua để không gửi nhầm tin nhắn riêng công khai!")
 
-    # TRƯỜNG HỢP 2: Bấm nút 'See Chat' (chuyển sang giao diện chat của khách)
+    # TRƯỜNG HỢP 2: Bấm nút 'See Chat' (chỉ khi trang ĐÃ CHUYỂN HẲN sang URL Messenger, KHÔNG CÒN ở trang bình luận)
     current_url = page.url.lower()
-    is_chat_view = "messenger" in current_url or ("inbox" in current_url and "facebook" not in current_url) or "see chat" in btn_text_lower
-    chat_panel = page.locator('[data-pagelet="ChatTab"], [role="main"]:has(div[role="textbox"][aria-label*="tin nhắn"])').first
-    if not is_chat_view and await chat_panel.count() > 0 and await chat_panel.is_visible():
-        is_chat_view = True
+    is_at_comments_page = "inbox/facebook" in current_url or (post_url and current_url == post_url.lower())
+
+    is_chat_view = False
+    if not is_at_comments_page:
+        is_chat_view = "messenger" in current_url or ("inbox" in current_url and "facebook" not in current_url)
+        chat_panel = page.locator('[data-pagelet="ChatTab"], [role="main"]:has(div[role="textbox"][aria-label*="tin nhắn"])').first
+        if not is_chat_view and await chat_panel.count() > 0 and await chat_panel.is_visible():
+            is_chat_view = True
 
     if is_chat_view:
         composer_selectors = [
-            'div[role="textbox"][contenteditable="true"]:not([aria-label*="bình luận"]):not([aria-label*="phản hồi"]):not([placeholder*="bình luận"])',
+            'div[role="textbox"][contenteditable="true"]:not([aria-label*="bình luận"]):not([aria-label*="phản hồi"]):not([aria-label*="trả lời"]):not([placeholder*="bình luận"])',
             'textarea[placeholder*="tin nhắn"]',
             'textarea[placeholder*="message"]',
         ]
@@ -1163,7 +1190,7 @@ async def send_private_inbox_to_commenter(
                 if await target_composer.is_visible():
                     aria = (await target_composer.get_attribute("aria-label") or "").lower()
                     placeholder = (await target_composer.get_attribute("placeholder") or "").lower()
-                    if not any(k in aria or k in placeholder for k in ["bình luận", "comment", "phản hồi"]):
+                    if not any(k in aria or k in placeholder for k in ["bình luận", "comment", "phản hồi", "trả lời", "reply"]):
                         try:
                             await type_human_like(page, target_composer, private_reply_text)
                             await page.keyboard.press("Enter")
