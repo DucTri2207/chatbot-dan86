@@ -1077,7 +1077,7 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         const isSystemString = (s) => {
             if (!s) return true;
             const low = s.toLowerCase().trim();
-            return blacklist.some(b => low.includes(b)) || pageNames.some(p => low.startsWith(p));
+            return blacklist.some(b => low.includes(b));
         };
 
         // Tìm tất cả articles trong vùng hiển thị chi tiết bài viết (ưu tiên x > 300 nếu là 3 cột, hoặc toàn bộ nếu mở đơn bài)
@@ -1177,18 +1177,20 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                                    Boolean(art.querySelector('svg[aria-label*="tác giả" i], svg[aria-label*="author" i], svg[aria-label*="badge" i]'));
 
             // Kiểm tra xem article này là phản hồi của chính Fanpage hoặc Tác giả:
-            // - Khớp tên tác giả (lowAuthor, mAria, topLines) với PAGE_NAMES
+            // - Khớp tên tác giả (lowAuthor, mAria, authorHeaderLine) với PAGE_NAMES
             // - Hoặc article có huy hiệu Tác giả / Author
             const lowAuthor = (authorName || '').toLowerCase();
-            const topLines = lines.slice(0, 3).map(l => l.toLowerCase());
+            const authorHeaderLine = lines.length > 0 ? lines[0].toLowerCase() : '';
+            const secondAuthorHeader = (lines.length > 1 && (authorHeaderLine === 'tác giả' || authorHeaderLine === 'author')) ? lines[1].toLowerCase() : '';
             let isPageReply = hasAuthorBadge ||
                               lowerAria.includes("dưới tên dần86farm") ||
                               lowerAria.includes("dưới tên dan86") ||
                               pageNames.some(p => (mAria && mAria[1] && mAria[1].toLowerCase().includes(p)) ||
-                                                  lowAuthor.includes(p) ||
+                                                  (lowAuthor && (lowAuthor === p || lowAuthor.includes(p))) ||
                                                   lowerAria.includes("dưới tên " + p) ||
                                                   lowerAria.includes("comment by " + p) ||
-                                                  topLines.some(tl => tl === p || tl.startsWith(p) || tl.endsWith(p)) ||
+                                                  (authorHeaderLine && (authorHeaderLine === p || authorHeaderLine.startsWith(p))) ||
+                                                  (secondAuthorHeader && (secondAuthorHeader === p || secondAuthorHeader.startsWith(p))) ||
                                                   lowerInner.startsWith(p) ||
                                                   lowerInner.startsWith("tác giả\n" + p) ||
                                                   lowerInner.startsWith("author\n" + p));

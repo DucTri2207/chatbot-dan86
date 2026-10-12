@@ -454,6 +454,91 @@ class TestWhitelistAndNestedReply(unittest.TestCase):
           throw new Error("Scenario 7 failed (Customer named Tác Giả Nguyễn): Expected unreplied_count == 1, got " + res7.unreplied_count);
         }}
 
+        // Scenario 8 (Chống nhận nhầm): Khách hỏi câu 1 dòng bắt đầu bằng tên sản phẩm 'quà tặng thuần việt'
+        const doc8 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Lan Hương vào 5 phút trước", "Lan Hương\\n5 phút\\nquà tặng thuần việt giá bao nhiêu vậy shop?\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc8;
+        const res8 = fn(pageNames);
+        if (res8.unreplied_count !== 1 || res8.author_name !== "Lan Hương") {{
+          throw new Error("Scenario 8 failed (Customer asks question starting with quà tặng thuần việt): Expected unreplied_count == 1, got " + res8.unreplied_count);
+        }}
+
+        // Scenario 9 (Chống nhận nhầm): Khách hỏi câu bắt đầu bằng thương hiệu 'Dan86'
+        const doc9 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Hoàng Nam vào 5 phút trước", "Hoàng Nam\\n5 phút\\nDan86 có set nào dưới 500k không?\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc9;
+        const res9 = fn(pageNames);
+        if (res9.unreplied_count !== 1 || res9.author_name !== "Hoàng Nam") {{
+          throw new Error("Scenario 9 failed (Customer asks starting with Dan86): Expected unreplied_count == 1, got " + res9.unreplied_count);
+        }}
+
+        // Scenario 10 (Chống nhận nhầm): Khách hỏi câu kết thúc bằng từ khóa 'quà tặng thuần việt'
+        const doc10 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Bảo Anh vào 5 phút trước", "Bảo Anh\\n5 phút\\nTư vấn quà tặng thuần việt\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc10;
+        const res10 = fn(pageNames);
+        if (res10.unreplied_count !== 1 || res10.author_name !== "Bảo Anh") {{
+          throw new Error("Scenario 10 failed (Customer asks ending with quà tặng thuần việt): Expected unreplied_count == 1, got " + res10.unreplied_count);
+        }}
+
+        // Scenario 11 (Chống nhận nhầm): Khách chỉ bình luận đúng 1 cụm từ 'Quà tặng thuần việt'
+        const doc11 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Quốc Huy vào 5 phút trước", "Quốc Huy\\n5 phút\\nQuà tặng thuần việt\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc11;
+        const res11 = fn(pageNames);
+        if (res11.unreplied_count !== 1 || res11.author_name !== "Quốc Huy") {{
+          throw new Error("Scenario 11 failed (Customer comments only Quà tặng thuần việt): Expected unreplied_count == 1, got " + res11.unreplied_count);
+        }}
+
+        // Scenario 12 (Chống nhận nhầm): Khách chào 'Chào Dần 86'
+        const doc12 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Ngọc Mai vào 5 phút trước", "Ngọc Mai\\n5 phút\\nChào Dần 86\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc12;
+        const res12 = fn(pageNames);
+        if (res12.unreplied_count !== 1 || res12.author_name !== "Ngọc Mai") {{
+          throw new Error("Scenario 12 failed (Customer says Chào Dần 86): Expected unreplied_count == 1, got " + res12.unreplied_count);
+        }}
+
         console.log("ALL_SCENARIOS_OK");
         """
         res = subprocess.run(["node", "-e", node_script], capture_output=True, text=True, check=True)
