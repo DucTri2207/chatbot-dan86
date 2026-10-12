@@ -219,13 +219,13 @@ def sync_state_to_github(
                 except Exception:
                     pass
 
-            # 6. Reset soft về origin/master
-            # Di chuyển HEAD về origin/master nhưng giữ nguyên toàn bộ thay đổi ở working directory
-            reset_rc, _, reset_err = run_git_cmd(["git", "reset", "--soft", "origin/master"], timeout=15)
+            # 6. Reset index về origin/master (mixed reset)
+            # Di chuyển HEAD và Index về origin/master sạch sẽ, không dính bất kỳ file mã nguồn nào bị stage nhầm
+            reset_rc, _, reset_err = run_git_cmd(["git", "reset", "origin/master"], timeout=15)
             if reset_rc != 0:
-                l.warning("Lần %d: git reset --soft origin/master cảnh báo: %s", attempt, reset_err)
+                l.warning("Lần %d: git reset origin/master cảnh báo: %s", attempt, reset_err)
 
-            # 7. Stage 2 file trạng thái
+            # 7. Stage DUY NHẤT 2 file trạng thái
             run_git_cmd(["git", "add", "state/bot_memory.json", "state/bot_status.json"], timeout=10)
 
             # 8. Kiểm tra xem có gì khác biệt so với origin/master không

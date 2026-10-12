@@ -254,17 +254,46 @@ async def verify_logged_in(page: Page) -> bool:
     Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa.
     Tự động xử lý nút bấm đăng nhập một chạm 'Tiếp tục bằng Facebook' / 'Tiếp tục dưới tên Đức Trí'
     nếu Meta Business Suite đang ở màn hình chuyển giao phiên (SSO bridge).
+    Hoàn toàn chống deadlock, không chờ vô ích khi popup yêu cầu mật khẩu thủ công,
+    và nhận diện chính xác giao diện Hộp thư/Bình luận của MBS ngay cả khi URL có query params chứa 'login'.
     """
-    url = page.url.lower()
+    import urllib.parse
 
-    # 1. Nếu trang chứa form nhập tài khoản / mật khẩu thông thường
-    login_form = await page.locator('input[name="email"], input[name="pass"]').count()
-    if login_form > 0:
-        return False
+    parsed = urllib.parse.urlparse(page.url)
+    path = parsed.path.lower()
 
-    # 2. Nếu đang ở trang đăng nhập của Meta Business Suite, tự động bấm nút tiếp tục bằng tài khoản có sẵn
-    if "login" in url:
-        logger.info("Phát hiện màn hình chuyển tiếp Meta Business. Đang kiểm tra nút đăng nhập một chạm...")
+    # 1. Kiểm tra nhanh giao diện Hộp thư / Bình luận MBS (Inbox indicators)
+    # Nếu các phần tử chính của Meta Business Suite đã hiện diện, kết luận đã đăng nhập thành công ngay lập tức!
+    inbox_indicators = [
+        '[role="navigation"]',
+        '[data-pagelet*="ThreadList"]',
+        'div._a6ag._a6ah',
+        'div[role="presentation"].x1ypdohk',
+        'div:has-text("Bình luận trên Facebook")',
+        'div:has-text("Tất cả tin nhắn")',
+        'div:has-text("Hộp thư")',
+    ]
+    for ind in inbox_indicators:
+        try:
+            loc = page.locator(ind).first
+            if await loc.count() > 0 and await loc.is_visible():
+                return True
+        except Exception:
+            pass
+
+    # 2. Nếu trang chứa form nhập tài khoản / mật khẩu thông thường trên trang chính
+    try:
+        login_form = await page.locator('input[name="email"], input[name="pass"]').count()
+        if login_form > 0:
+            return False
+    except Exception:
+        pass
+
+    # 3. Kiểm tra xem có đang ở trang login thực sự không (dựa trên đường dẫn path)
+    is_at_loginpage = "/business/loginpage" in path or path.startswith("/login") or path == "/login"
+
+    if is_at_loginpage:
+        logger.info("Phát hiện màn hình chuyển tiếp Meta Business (%s). Đang kiểm tra nút đăng nhập một chạm...", page.url[:80])
         sso_selectors = [
             'div:has-text("Tiếp tục bằng Facebook")',
             'button:has-text("Tiếp tục bằng Facebook")',
@@ -280,23 +309,25 @@ async def verify_logged_in(page: Page) -> bool:
         ]
 
         clicked = False
+        sso_success = False
         for sel in sso_selectors:
             loc = page.locator(sel).first
             if await loc.count() > 0 and await loc.is_visible():
                 logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
-                try:
-                    popup_future = asyncio.get_event_loop().create_future()
-                    def on_sso_page(new_p):
-                        if not popup_future.done():
-                            popup_future.set_result(new_p)
-                    page.context.on("page", on_sso_page)
+                popup_future = asyncio.get_event_loop().create_future()
+                def on_sso_page(new_p):
+                    if not popup_future.done():
+                        popup_future.set_result(new_p)
 
+                page.context.on("page", on_sso_page)
+                try:
                     await loc.click()
                     try:
-                        popup = await asyncio.wait_for(popup_future, timeout=12.0)
+                        popup = await asyncio.wait_for(popup_future, timeout=6.0)
                         await popup.wait_for_load_state("domcontentloaded")
-                        await asyncio.sleep(1.5)
+                        await asyncio.sleep(0.5)
 
+                        # Bấm nút 'Tiếp tục' trong popup
                         p_btn = popup.locator(
                             'div[role="button"]:has-text("Tiếp tục"), '
                             'button:has-text("Tiếp tục"), '
@@ -307,43 +338,83 @@ async def verify_logged_in(page: Page) -> bool:
                             'button:has-text("Continue")'
                         ).first
                         if await p_btn.count() > 0:
-                            await p_btn.click()
+                            await p_btn.click(force=True)
                         else:
                             txt_loc = popup.locator('text="Tiếp tục"').first
                             if await txt_loc.count() > 0:
-                                await txt_loc.click()
+                                await txt_loc.click(force=True)
 
-                        try:
-                            await popup.wait_for_event("close", timeout=10000)
-                        except Exception:
-                            pass
+                        await asyncio.sleep(0.5)
+                        # Kiểm tra xem popup có đòi mật khẩu thủ công không
+                        if not popup.is_closed():
+                            pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                            if pass_count > 0:
+                                logger.warning("Popup SSO yêu cầu nhập mật khẩu thủ công (chưa có token một chạm hoạt động). Đóng popup để không chặn vòng quét.")
+                                try:
+                                    await popup.close()
+                                except Exception:
+                                    pass
+                                sso_success = False
+                            else:
+                                # Chờ tối đa 3s cho popup tự đóng hoặc chuyển hướng
+                                try:
+                                    await popup.wait_for_event("close", timeout=3000)
+                                    sso_success = True
+                                except Exception:
+                                    if not popup.is_closed():
+                                        try:
+                                            await popup.close()
+                                        except Exception:
+                                            pass
+                                    sso_success = True
                     except Exception as e_pop:
                         logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
+                    finally:
+                        try:
+                            page.context.remove_listener("page", on_sso_page)
+                        except Exception:
+                            pass
 
                     clicked = True
                     break
                 except Exception as e_click:
                     logger.debug("Lỗi bấm nút SSO: %s", e_click)
+                    try:
+                        page.context.remove_listener("page", on_sso_page)
+                    except Exception:
+                        pass
 
-        if clicked:
-            # Chờ trang chính chuyển hướng khỏi login (tối đa 15s)
-            for _ in range(15):
-                await asyncio.sleep(1.0)
-                if "login" not in page.url.lower():
-                    break
-            url = page.url.lower()
-            if "login" in url:
-                try:
-                    await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
-                    await human_sleep(2.0, 3.5)
-                    url = page.url.lower()
-                except Exception:
-                    pass
+        if clicked and sso_success:
+            # Điều hướng trang chính tới thẳng URL inbox mục tiêu
+            try:
+                await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
+                await human_sleep(2.0, 3.5)
+            except Exception as e_nav:
+                logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
+        elif clicked and not sso_success:
+            return False
 
-    if "checkpoint" in url:
+    # Đánh giá lại trạng thái sau chuyển hướng
+    parsed = urllib.parse.urlparse(page.url)
+    path = parsed.path.lower()
+
+    if "checkpoint" in path:
         return False
-    if "login" in url:
+    if "/business/loginpage" in path or path == "/login" or path == "/login/":
         return False
+
+    # Kiểm tra xác nhận lần cuối qua sự tồn tại của UI Hộp thư
+    for ind in inbox_indicators:
+        try:
+            if await page.locator(ind).first.count() > 0:
+                break
+        except Exception:
+            pass
+    else:
+        # Nếu path không chứa login và cũng không có form đăng nhập, nhưng chưa rõ UI:
+        # Kiểm tra xem trang có form đăng nhập bất kỳ không
+        if await page.locator('input[name="email"], input[name="pass"]').count() > 0:
+            return False
 
     # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
     try:
