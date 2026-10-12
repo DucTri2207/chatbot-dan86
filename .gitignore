@@ -9,4 +9,5 @@ state/fb_storage_state.json
 state/GITHUB_SECRET_VALUE.txt
 state/*.tmp
 logs/
-
+.agents/
+*.png

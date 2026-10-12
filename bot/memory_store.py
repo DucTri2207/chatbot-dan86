@@ -42,7 +42,9 @@ def make_comment_key(
     - Kết hợp: post_id (selected_item_id) + normalize_text(author_name) + normalize_text(comment_text).
     - Ổn định và bền vững: Không bị thay đổi khóa khi thứ tự DOM / domIndex thay đổi.
     """
-    norm_author = normalize_text(author_name)
+    from bot.bot_config import clean_customer_name
+    c_name = clean_customer_name(author_name) if author_name else ""
+    norm_author = normalize_text(c_name or author_name)
     norm_text = normalize_text(comment_text)
 
     # Ưu tiên tạo key kết hợp post_id + dom_index + author + text
@@ -103,21 +105,196 @@ class BotMemoryStore:
                 self.data["conversations"] = loaded.get("conversations", {})
                 if isinstance(loaded.get("stats"), dict):
                     self.data["stats"].update(loaded["stats"])
-        except Exception:
-            # Nếu file hỏng hoặc trống, giữ nguyên cấu trúc mặc định an toàn
-            pass
+        except Exception as e:
+            # Nếu file hỏng nhưng có dữ liệu, tạo bản sao lưu khẩn cấp để không bị mất
+            if os.path.exists(self.memory_path) and os.path.getsize(self.memory_path) > 10:
+                try:
+                    bak_path = f"{self.memory_path}.corrupted_{int(time.time())}"
+                    import shutil
+                    shutil.copyfile(self.memory_path, bak_path)
+                except Exception:
+                    pass
 
     def save(self) -> None:
         """Lưu dữ liệu bộ nhớ xuống ổ đĩa an toàn (atomic write)."""
-        os.makedirs(os.path.dirname(self.memory_path) or STATE_DIR, exist_ok=True)
-        temp_path = f"{self.memory_path}.tmp"
-        with open(temp_path, "w", encoding="utf-8") as f:
-            json.dump(self.data, f, ensure_ascii=False, indent=2)
-        os.replace(temp_path, self.memory_path)
+        try:
+            os.makedirs(os.path.dirname(self.memory_path) or STATE_DIR, exist_ok=True)
+            temp_path = f"{self.memory_path}.tmp"
+            with open(temp_path, "w", encoding="utf-8") as f:
+                json.dump(self.data, f, ensure_ascii=False, indent=2)
+            os.replace(temp_path, self.memory_path)
+        except Exception:
+            pass
+
+    def merge_from_dict(self, other_data: Dict[str, Any]) -> bool:
+        """
+        Hợp nhất dữ liệu bộ nhớ từ nguồn ngoài (remote hoặc file khác) mà không làm mất comment/hội thoại nào.
+        """
+        if not isinstance(other_data, dict):
+            return False
+
+        changed = False
+
+        # 1. Hợp nhất bình luận đã phản hồi
+        other_comments = other_data.get("replied_comments", {})
+        if isinstance(other_comments, dict):
+            for k, v in other_comments.items():
+                if not isinstance(v, dict):
+                    continue
+                if k not in self.data["replied_comments"]:
+                    self.data["replied_comments"][k] = v
+                    changed = True
+                else:
+                    cur = self.data["replied_comments"][k]
+                    if isinstance(cur, dict):
+                        if not cur.get("private_inbox_sent") and v.get("private_inbox_sent"):
+                            cur["private_inbox_sent"] = True
+                            if v.get("private_reply_text"):
+                                cur["private_reply_text"] = v["private_reply_text"]
+                            changed = True
+
+        # 2. Hợp nhất hội thoại Messenger
+        other_convs = other_data.get("conversations", {})
+        if isinstance(other_convs, dict):
+            for k, v in other_convs.items():
+                if not isinstance(v, dict):
+                    continue
+                if k not in self.data["conversations"]:
+                    self.data["conversations"][k] = v
+                    changed = True
+                else:
+                    cur = self.data["conversations"][k]
+                    if isinstance(cur, dict):
+                        cur_ts = max(float(cur.get("last_bot_reply_ts", 0)), float(cur.get("last_interaction_ts", 0)))
+                        v_ts = max(float(v.get("last_bot_reply_ts", 0)), float(v.get("last_interaction_ts", 0)))
+                        if v_ts > cur_ts:
+                            self.data["conversations"][k] = v
+                            changed = True
+                        elif v.get("stage", 0) > cur.get("stage", 0):
+                            cur["stage"] = v["stage"]
+                            changed = True
+
+        # 3. Đồng bộ thống kê
+        total_cmts = len(self.data["replied_comments"])
+        total_inbox = sum(
+            1 for c in self.data["replied_comments"].values() if isinstance(c, dict) and c.get("private_inbox_sent")
+        )
+        if self.data["stats"].get("comments_replied", 0) != total_cmts:
+            self.data["stats"]["comments_replied"] = total_cmts
+            changed = True
+        if self.data["stats"].get("private_inboxes_from_comment", 0) != total_inbox:
+            self.data["stats"]["private_inboxes_from_comment"] = total_inbox
+            changed = True
+
+        other_stats = other_data.get("stats", {})
+        if isinstance(other_stats, dict):
+            for stat_k in ("first_inbox_replies", "wait_staff_replies"):
+                if other_stats.get(stat_k, 0) > self.data["stats"].get(stat_k, 0):
+                    self.data["stats"][stat_k] = other_stats[stat_k]
+                    changed = True
+
+        if changed:
+            self.save()
+
+        return changed
 
     # ==========================================================================
     # XỬ LÝ BÌNH LUẬN (COMMENT + AUTO INBOX NGƯỜI COMMENT)
     # ==========================================================================
+    def get_comment_record(
+        self,
+        comment_key: str = "",
+        author_name: str = "",
+        comment_text: str = "",
+        post_id: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        """
+        Tìm kiếm bản ghi bình luận đã được xử lý trong bộ nhớ:
+        1. Tìm trực tiếp theo comment_key chính xác.
+        2. Nếu không thấy (do dom_index thay đổi khi DOM re-render), tìm theo (author_name + comment_text + post_id).
+        """
+        if comment_key and comment_key in self.data.get("replied_comments", {}):
+            return self.data["replied_comments"][comment_key]
+
+        from bot.bot_config import clean_customer_name
+        c_name = clean_customer_name(author_name) if author_name else ""
+        norm_author = normalize_text(c_name or author_name)
+        norm_text = normalize_text(comment_text)
+        pid_clean = str(post_id).strip()
+
+        if not norm_author or norm_author == "bạn":
+            return None
+
+        norm_words = set(norm_author.split())
+        for rk, rv in self.data.get("replied_comments", {}).items():
+            if isinstance(rv, dict):
+                r_author = normalize_text(rv.get("author", ""))
+                r_text = normalize_text(rv.get("comment_text", ""))
+                r_pid = str(rv.get("post_id", "")).strip()
+
+                is_author_match = (r_author == norm_author) or (
+                    len(norm_words) > 1 and norm_words == set(r_author.split())
+                )
+                if r_author and is_author_match:
+                    if r_text and norm_text and r_text == norm_text:
+                        if pid_clean:
+                            if pid_clean in rk or (r_pid and r_pid == pid_clean):
+                                return rv
+                        else:
+                            return rv
+        return None
+
+    def is_customer_in_cooldown(
+        self,
+        customer_name: str,
+        cooldown_seconds: float = 300.0,
+        now_ts: Optional[float] = None,
+    ) -> bool:
+        """
+        Kiểm tra khách hàng có đang trong thời gian cooldown chống spam hay không.
+        Nếu khách hàng vừa được rep (comment hoặc inbox) trong vòng cooldown_seconds (mặc định 5 phút = 300s),
+        trả về True.
+        Hỗ trợ nhận diện đảo ngữ tên khách (ví dụ: 'Đức Trí' và 'Trí Đức').
+        """
+        from bot.bot_config import clean_customer_name
+        clean_name = clean_customer_name(customer_name) if customer_name else ""
+        norm_name = normalize_text(clean_name or customer_name)
+        if not norm_name or norm_name == "bạn":
+            return False
+
+        current_time = now_ts if now_ts is not None else time.time()
+        norm_words = set(norm_name.split())
+
+        # 1. Kiểm tra trong các bình luận đã trả lời
+        for rk, rv in self.data.get("replied_comments", {}).items():
+            if isinstance(rv, dict):
+                r_author = normalize_text(rv.get("author", ""))
+                r_ts = float(rv.get("replied_at", 0))
+                if r_author:
+                    is_match = (r_author == norm_name) or (
+                        len(norm_words) > 1 and norm_words == set(r_author.split())
+                    )
+                    if is_match:
+                        diff = current_time - r_ts
+                        if -5 <= diff < cooldown_seconds:
+                            return True
+
+        # 2. Kiểm tra trong các cuộc hội thoại inbox
+        for tk, tv in self.data.get("conversations", {}).items():
+            if isinstance(tv, dict):
+                c_name = normalize_text(tv.get("customer_name", ""))
+                last_reply = float(tv.get("last_bot_reply_ts", 0))
+                if c_name:
+                    is_match = (c_name == norm_name) or (
+                        len(norm_words) > 1 and norm_words == set(c_name.split())
+                    )
+                    if is_match:
+                        diff = current_time - last_reply
+                        if -5 <= diff < cooldown_seconds:
+                            return True
+
+        return False
+
     def should_reply_comment(
         self,
         author_name: str,
@@ -127,6 +304,7 @@ class BotMemoryStore:
         post_id: str = "",
         dom_index: int = 0,
         now_ts: Optional[float] = None,
+        customer_cooldown_seconds: float = 0.0,
     ) -> Tuple[bool, str]:
         """
         Kiểm tra xem bình luận này có cần trả lời hay không.
@@ -135,8 +313,10 @@ class BotMemoryStore:
         1. Tên tác giả là nhãn hệ thống -> Bỏ qua.
         2. Nếu trên DOM thực tế ĐÃ CÓ câu trả lời của Page ngay dưới bình luận này (has_page_reply_in_dom == True) -> Bỏ qua.
         3. Chấp nhận mọi bình luận của khách kể cả 1 ký tự ('.', icon, sticker, số, chữ ngắn).
-        4. Nếu trên DOM thực tế CHƯA CÓ câu trả lời của Page bên dưới (has_page_reply_in_dom == False):
-           Bắt buộc phải trả lời bình luận đó (trừ khi chính bình luận đó vừa được rep trong memory).
+        4. Kiểm tra trong bộ nhớ:
+           - Khóa định danh duy nhất của bình luận này đã nằm trong replied_comments.
+           - Hoặc đã tồn tại bản ghi bình luận cùng tác giả + cùng nội dung trên cùng bài viết (tránh lệch dom_index).
+        5. Kiểm tra cooldown chống spam cấp độ khách hàng nếu customer_cooldown_seconds > 0.
         """
         from bot.bot_config import clean_customer_name, is_system_label
         
@@ -167,12 +347,29 @@ class BotMemoryStore:
             return False, key
 
         # 4. Kiểm tra trong bộ nhớ:
-        # Nếu khóa định danh duy nhất của bình luận này đã nằm trong replied_comments:
+        # 4.1 Khóa định danh duy nhất của bình luận này đã nằm trong replied_comments
         if key in self.data["replied_comments"]:
             return False, key
 
-        # Chống gửi lặp trong cùng 1 phiên ngắn (cooldown 120s cho cùng bài, cùng tác giả, cùng nội dung chính xác)
+        # 4.2 Kiểm tra nếu bình luận này đã được rep trước đó trên cùng bài viết (tránh lệch key khi dom_index thay đổi)
+        existing_rec = self.get_comment_record(
+            comment_key=key,
+            author_name=clean_name,
+            comment_text=comment_text,
+            post_id=post_id,
+        )
+        if existing_rec is not None:
+            return False, key
+
+        # 5. Cooldown chống spam cấp độ khách hàng (nếu được kích hoạt)
         current_time = now_ts if now_ts is not None else time.time()
+        if customer_cooldown_seconds > 0:
+            if self.is_customer_in_cooldown(clean_name, cooldown_seconds=customer_cooldown_seconds, now_ts=current_time):
+                return False, key
+
+        # Chống gửi lặp trong cùng 1 phiên ngắn (cooldown chống spam khách hàng liên tục)
+        from bot.bot_config import CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS
+
         for rk, rv in self.data["replied_comments"].items():
             if isinstance(rv, dict):
                 r_author = normalize_text(rv.get("author", ""))
@@ -180,7 +377,7 @@ class BotMemoryStore:
                 r_ts = float(rv.get("replied_at", 0))
                 if r_author and r_author == normalize_text(clean_name):
                     if r_text and norm_text and r_text == norm_text:
-                        if post_id and str(post_id).strip() in rk and (current_time - r_ts < 120):
+                        if post_id and str(post_id).strip() in rk and (current_time - r_ts < CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS):
                             return False, rk
 
         # Nếu trên DOM thực tế chưa có phản hồi của Page và chưa rep trong memory -> Bắt buộc trả lời!
@@ -215,18 +412,37 @@ class BotMemoryStore:
         private_inbox_sent: bool,
         private_reply_text: str = "",
         now_ts: Optional[float] = None,
+        post_id: str = "",
+        dom_index: int = 0,
     ) -> None:
         """Đánh dấu bình luận đã được trả lời và đã gửi inbox riêng."""
         from bot.bot_config import clean_customer_name
         ts = now_ts if now_ts is not None else time.time()
         c_name = clean_customer_name(author_name)
+
+        pid = str(post_id).strip()
+        d_idx = dom_index
+        if comment_key and comment_key.startswith("cmt:"):
+            parts = comment_key.split(":")
+            if len(parts) >= 4:
+                if not pid:
+                    pid = parts[1]
+                if d_idx == 0 and parts[2].isdigit():
+                    d_idx = int(parts[2])
+
+        existing = self.data["replied_comments"].get(comment_key, {})
+        inbox_attempts = existing.get("inbox_attempts", 0) + 1
+
         self.data["replied_comments"][comment_key] = {
             "author": c_name,
             "comment_text": comment_text,
-            "public_reply": public_reply,
-            "private_inbox_sent": bool(private_inbox_sent),
-            "private_reply_text": private_reply_text,
+            "public_reply": public_reply or existing.get("public_reply", ""),
+            "private_inbox_sent": bool(private_inbox_sent or existing.get("private_inbox_sent", False)),
+            "private_reply_text": private_reply_text or existing.get("private_reply_text", ""),
             "replied_at": ts,
+            "post_id": pid,
+            "dom_index": d_idx,
+            "inbox_attempts": inbox_attempts,
         }
         self.data["stats"]["comments_replied"] += 1
         if private_inbox_sent:
@@ -243,6 +459,8 @@ class BotMemoryStore:
                     "last_bot_reply_ts": ts,
                     "source": "comment_private_reply",
                 }
+            else:
+                self.data["conversations"][t_key]["last_bot_reply_ts"] = ts
         self.save()
 
     # ==========================================================================

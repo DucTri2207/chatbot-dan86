@@ -93,49 +93,24 @@ def update_bot_heartbeat(
         pass
 
 
-def sync_state_to_github_if_vps(logger: logging.Logger, force: bool = False) -> None:
+def sync_state_to_github_if_vps(
+    logger: logging.Logger,
+    force: bool = False,
+    memory: Optional[BotMemoryStore] = None,
+) -> None:
     """
     Tự động commit & push state/bot_memory.json và state/bot_status.json lên GitHub
-    ngay trong quá trình chạy trên VPS GitHub Actions, giúp Dashboard thời gian thực
-    ở máy người dùng theo dõi được ngay lập tức từng bình luận, tin nhắn mà không cần đợi ca chạy kết thúc!
+    ngay trong quá trình chạy trên VPS GitHub Actions bằng cơ chế Smart Merge và Fast-Forward,
+    giúp Dashboard thời gian thực ở máy người dùng theo dõi được ngay lập tức từng bình luận, tin nhắn
+    mà không bao giờ bị mất dữ liệu hay xung đột rebase!
     """
-    if not os.environ.get("GITHUB_ACTIONS"):
+    if not os.environ.get("GITHUB_ACTIONS") and not force:
         return
 
     try:
-        import subprocess
-        # Kiểm tra xem có thay đổi trong file memory hoặc status không
-        diff_check = subprocess.run(
-            ["git", "status", "--porcelain", "state/bot_memory.json", "state/bot_status.json"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-        )
-        if not diff_check.stdout.strip() and not force:
-            return
+        from bot.state_sync import sync_state_to_github
 
-        subprocess.run(["git", "rebase", "--abort"], capture_output=True, timeout=10)
-        subprocess.run(["git", "config", "user.name", "dan86-bot"], capture_output=True, timeout=10)
-        subprocess.run(["git", "config", "user.email", "bot@dan86.vn"], capture_output=True, timeout=10)
-        subprocess.run(["git", "add", "state/bot_memory.json", "state/bot_status.json"], capture_output=True, timeout=10)
-
-        commit_res = subprocess.run(
-            ["git", "commit", "-m", "chore: sync bot live status [skip ci]"],
-            capture_output=True,
-            text=True,
-            timeout=15,
-        )
-        if commit_res.returncode == 0:
-            rebase_res = subprocess.run(
-                ["git", "pull", "--rebase", "-X", "ours", "origin", "master"],
-                capture_output=True,
-                timeout=20,
-            )
-            if rebase_res.returncode != 0:
-                subprocess.run(["git", "rebase", "--abort"], capture_output=True, timeout=10)
-            push_res = subprocess.run(["git", "push", "origin", "HEAD:master"], capture_output=True, text=True, timeout=25)
-            if push_res.returncode == 0:
-                logger.info("Đã đồng bộ Live Status & Memory lên GitHub VPS thành công.")
+        sync_state_to_github(log=logger, force=force, memory_instance=memory)
     except Exception as e:
         logger.debug("Không thể đồng bộ live state lên GitHub: %s", e)
 
@@ -265,7 +240,7 @@ async def run_bot_loop(
 
                 # Tự động đồng bộ Live Status & Memory lên GitHub VPS nếu có bình luận/tin nhắn mới hoặc định kỳ
                 if cmt_replied > 0 or inbox_replied > 0 or cycle % 3 == 0:
-                    sync_state_to_github_if_vps(logger)
+                    sync_state_to_github_if_vps(logger, memory=memory)
 
                 if run_once:
                     logger.info("Đã hoàn thành 1 vòng quét (--once). Kết thúc.")
@@ -297,7 +272,7 @@ async def run_bot_loop(
                 stats=memory.data.get("stats", {}),
             )
             # Đồng bộ kết thúc ca lên GitHub
-            sync_state_to_github_if_vps(logger, force=True)
+            sync_state_to_github_if_vps(logger, force=True, memory=memory)
             # Lưu lại trạng thái cookies mới nhất nếu phiên vẫn còn giữ quyền đăng nhập (c_user) và bảo toàn origins
             try:
                 active_cookies = await context.cookies()

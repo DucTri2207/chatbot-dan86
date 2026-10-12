@@ -558,6 +558,221 @@ class TestDan86BotLogic(unittest.TestCase):
         from bot.page_bot_engine import clean_comment_text
         self.assertEqual(clean_comment_text("1 giờ " + customer_text), customer_text)
 
+    def test_12_customer_level_anti_spam_cooldown(self) -> None:
+        """
+        Kiểm tra cơ chế Cooldown chống Spam cấp độ khách hàng:
+        Nếu một khách hàng (ví dụ Đức Trí) vừa được rep trong vòng 5-10 phút gần nhất,
+        KHÔNG ĐƯỢC rep tiếp liên tục để chống spam hoàn toàn.
+        """
+        t0 = 5000.0
+        author = "Đức Trí"
+        post_id = "post_duc_tri_01"
+
+        # Lần 1: Bình luận đầu tiên -> Cho phép rep
+        should_rep, key = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=".",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=0,
+            now_ts=t0,
+        )
+        self.assertTrue(should_rep)
+        self.memory.mark_comment_replied(
+            comment_key=key,
+            author_name=author,
+            comment_text=".",
+            public_reply="Dạ chào Đức Trí...",
+            private_inbox_sent=True,
+            now_ts=t0,
+            post_id=post_id,
+            dom_index=0,
+        )
+
+        # Ngay sau đó (sau 60s): Khách bình luận câu khác -> Phải bị chặn bởi Cooldown chống spam cấp khách hàng!
+        self.assertTrue(self.memory.is_customer_in_cooldown(author, cooldown_seconds=300.0, now_ts=t0 + 60.0))
+        self.assertTrue(self.memory.is_customer_in_cooldown("Trí Đức", cooldown_seconds=300.0, now_ts=t0 + 60.0))
+
+        # Kiểm tra qua should_reply_comment với tham số customer_cooldown_seconds
+        should_rep_soon, _ = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text="Cho mình xem thêm mẫu nhé",
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=t0 + 60.0,
+            customer_cooldown_seconds=300.0,
+        )
+        self.assertFalse(should_rep_soon, "Trong vòng 5 phút khách không được phép nhận rep liên tục chống spam!")
+
+        # Sau 6 phút (t0 + 360s > 300s): Hết cooldown chống spam
+        self.assertFalse(self.memory.is_customer_in_cooldown(author, cooldown_seconds=300.0, now_ts=t0 + 360.0))
+
+    def test_13_dom_index_shift_tolerance_and_no_duplicate_reply(self) -> None:
+        """
+        Đảm bảo không bị lệch key giữa post_id và dom_index khi DOM re-render:
+        - Chu kỳ 1: Bình luận tại dom_index=0 được rep và ghi nhận.
+        - Chu kỳ 2: DOM re-render, bình luận đó bị đẩy sang dom_index=1.
+        Memory store PHẢI nhận diện được đây là cùng bình luận trên cùng post_id,
+        tuyệt đối không rep lại (không spam)!
+        """
+        post_id = "post_stress_dom"
+        author = "Đức Trí"
+        text = "1 năm Ib"
+
+        # Chu kỳ 1: dom_index = 0
+        should_rep_c1, key_c1 = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=0,
+            now_ts=1000.0,
+        )
+        self.assertTrue(should_rep_c1)
+        self.memory.mark_comment_replied(
+            comment_key=key_c1,
+            author_name=author,
+            comment_text=text,
+            public_reply="Dạ chào anh Trí",
+            private_inbox_sent=True,
+            now_ts=1000.0,
+            post_id=post_id,
+            dom_index=0,
+        )
+
+        # Chu kỳ 2: dom_index bị lệch thành 1, Facebook DOM chưa kịp hiện has_page_reply
+        should_rep_c2, key_c2 = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=2000.0,
+        )
+        self.assertFalse(should_rep_c2, "Dù dom_index lệch từ 0 sang 1, memory store vẫn phải nhận diện đã rep rồi để chống spam!")
+
+        # get_comment_record phải tìm thấy bản ghi kể cả khi tra cứu bằng dom_index mới
+        rec = self.memory.get_comment_record(
+            comment_key=key_c2,
+            author_name=author,
+            comment_text=text,
+            post_id=post_id,
+        )
+        self.assertIsNotNone(rec)
+        self.assertTrue(rec.get("private_inbox_sent"))
+
+    def test_14_process_comments_candidate_selection_loop_and_needs_inbox_only(self) -> None:
+        """
+        Kiểm tra mô phỏng chính xác luồng chọn candidate trong process_facebook_comments_tab:
+        1. BẮT BUỘC kiểm tra if should_rep: trước khi gán target_candidate.
+        2. Nếu cand_has_reply nhưng chưa gửi inbox -> needs_inbox_only = True, chỉ gửi 1 lần duy nhất.
+        3. Khách trong cooldown 5 phút bị skip hoàn toàn.
+        """
+        from bot.bot_config import CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS
+
+        post_id = "post_flow_test"
+        t0 = 10000.0
+
+        # Giả lập danh sách candidates
+        candidates = [
+            {"dom_index": 0, "author_name": "Đức Trí", "comment_text": "Ib giá", "has_page_reply": False},
+            {"dom_index": 1, "author_name": "Khách B", "comment_text": "Set mây tre", "has_page_reply": True},
+        ]
+
+        # Vòng 1: Đức Trí chưa rep -> Phải được chọn với needs_inbox_only = False
+        selected_cand = None
+        selected_key = None
+        needs_inbox_only = False
+
+        for cand in candidates:
+            c_auth = cand["author_name"]
+            c_txt = cand["comment_text"]
+            c_idx = cand["dom_index"]
+            c_reply = cand["has_page_reply"]
+
+            if self.memory.is_customer_in_cooldown(c_auth, cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS, now_ts=t0):
+                continue
+
+            should_rep, c_key = self.memory.should_reply_comment(
+                author_name=c_auth,
+                comment_text=c_txt,
+                has_page_reply_in_dom=c_reply,
+                post_id=post_id,
+                dom_index=c_idx,
+                now_ts=t0,
+            )
+
+            if should_rep:
+                selected_cand = cand
+                selected_key = c_key
+                needs_inbox_only = False
+                break
+            elif c_key:
+                rec = self.memory.get_comment_record(c_key, c_auth, c_txt, post_id)
+                if c_reply or rec:
+                    if not rec or not rec.get("private_inbox_sent"):
+                        selected_cand = cand
+                        selected_key = c_key
+                        needs_inbox_only = True
+                        break
+
+        self.assertIsNotNone(selected_cand)
+        self.assertEqual(selected_cand["author_name"], "Đức Trí")
+        self.assertFalse(needs_inbox_only)
+
+        # Bot xử lý và đánh dấu Đức Trí đã rep công khai + đã gửi inbox
+        self.memory.mark_comment_replied(
+            comment_key=selected_key,
+            author_name="Đức Trí",
+            comment_text="Ib giá",
+            public_reply="Dạ chào Đức Trí...",
+            private_inbox_sent=True,
+            now_ts=t0,
+            post_id=post_id,
+            dom_index=0,
+        )
+
+        # Vòng 2 (ngay sau đó, t0 + 10s):
+        # - Đức Trí đang trong cooldown -> Bị skip hoàn toàn!
+        # - Khách B có has_page_reply = True nhưng chưa có trong memory -> Phải được chọn với needs_inbox_only = True!
+        selected_cand_2 = None
+        needs_inbox_only_2 = False
+
+        for cand in candidates:
+            c_auth = cand["author_name"]
+            c_txt = cand["comment_text"]
+            c_idx = cand["dom_index"]
+            c_reply = cand["has_page_reply"]
+
+            if self.memory.is_customer_in_cooldown(c_auth, cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS, now_ts=t0 + 10):
+                continue
+
+            should_rep, c_key = self.memory.should_reply_comment(
+                author_name=c_auth,
+                comment_text=c_txt,
+                has_page_reply_in_dom=c_reply,
+                post_id=post_id,
+                dom_index=c_idx,
+                now_ts=t0 + 10,
+            )
+
+            if should_rep:
+                selected_cand_2 = cand
+                needs_inbox_only_2 = False
+                break
+            elif c_key:
+                rec = self.memory.get_comment_record(c_key, c_auth, c_txt, post_id)
+                if c_reply or rec:
+                    if not rec or not rec.get("private_inbox_sent"):
+                        selected_cand_2 = cand
+                        needs_inbox_only_2 = True
+                        break
+
+        self.assertIsNotNone(selected_cand_2)
+        self.assertEqual(selected_cand_2["author_name"], "Khách B", "Đức Trí phải bị skip do cooldown, Khách B phải được chọn!")
+        self.assertTrue(needs_inbox_only_2, "Khách B đã có reply trên DOM nhưng chưa gửi inbox -> Phải kích hoạt needs_inbox_only = True!")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)

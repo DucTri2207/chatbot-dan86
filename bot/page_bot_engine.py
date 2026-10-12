@@ -25,6 +25,7 @@ from playwright.async_api import Browser, BrowserContext, Locator, Page, Playwri
 from bot.bot_config import (
     ACTION_COOLDOWN_SECONDS,
     CHROME_PROFILE_DIR,
+    CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
     GITHUB_SECRET_EXPORT_FILE,
     LOGS_DIR,
     MAX_THREADS_PER_CYCLE,
@@ -1358,18 +1359,46 @@ async def process_facebook_comments_tab(
                             logger.info("Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", cand_author)
                             continue
 
+                    # Bổ sung cơ chế Cooldown chống Spam cấp độ khách hàng:
+                    # Nếu một khách hàng (ví dụ Đức Trí) vừa được rep trong vòng 5-10 phút gần nhất, KHÔNG ĐƯỢC rep tiếp liên tục để chống spam hoàn toàn
+                    if memory.is_customer_in_cooldown(cand_author, cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS):
+                        logger.info(
+                            "Khách hàng [%s] vừa được phản hồi gần đây (Cooldown chống spam %.0f phút). Bỏ qua hoàn toàn!",
+                            cand_author,
+                            CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS / 60,
+                        )
+                        continue
+
                     should_rep, comment_key = memory.should_reply_comment(
                         author_name=cand_author,
                         comment_text=cand_text,
-                        has_page_reply_in_dom=False,  # Bỏ qua luật chờ phản hồi theo chỉ đạo: Cứ cmt là phải vào rep ngay!
+                        has_page_reply_in_dom=cand_has_reply,
                         post_id=post_id,
                         dom_index=cand_idx,
                     )
-                    # Luật người dùng: Cứ cmt bình luận là phải vào rep công khai ngay, bỏ qua luật chờ phản hồi!
-                    target_candidate = cand
-                    target_key = comment_key
-                    needs_inbox_only = False
-                    break
+
+                    # BẮT BUỘC kiểm tra if should_rep: trước khi gán target_candidate = cand
+                    if should_rep:
+                        target_candidate = cand
+                        target_key = comment_key
+                        needs_inbox_only = False
+                        break
+
+                    # Nếu cand_has_reply hoặc đã rep công khai nhưng chưa gửi inbox, xử lý needs_inbox_only = True và chỉ gửi 1 lần duy nhất
+                    if comment_key:
+                        existing_rec = memory.get_comment_record(
+                            comment_key=comment_key,
+                            author_name=cand_author,
+                            comment_text=cand_text,
+                            post_id=post_id,
+                        )
+                        # Nếu trên DOM đã có phản hồi (cand_has_reply) hoặc trong memory đã có bản ghi nhưng chưa gửi inbox:
+                        if cand_has_reply or existing_rec:
+                            if not existing_rec or not existing_rec.get("private_inbox_sent"):
+                                target_candidate = cand
+                                target_key = comment_key
+                                needs_inbox_only = True
+                                break
 
                 # Nếu tất cả các candidate đều đã được xử lý trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
                 if target_candidate is None:
@@ -1428,6 +1457,8 @@ async def process_facebook_comments_tab(
                         public_reply="(Đã phản hồi bình luận công khai)",
                         private_inbox_sent=inbox_sent,
                         private_reply_text=private_inbox_reply,
+                        post_id=post_id,
+                        dom_index=cand_idx,
                     )
                     replied_count += 1
                     if page.url != current_post_url:
@@ -1557,6 +1588,8 @@ async def process_facebook_comments_tab(
                         public_reply=public_reply,
                         private_inbox_sent=inbox_sent,
                         private_reply_text=private_inbox_reply,
+                        post_id=post_id,
+                        dom_index=cand_idx,
                     )
                     replied_count += 1
 

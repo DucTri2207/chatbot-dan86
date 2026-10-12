@@ -121,6 +121,9 @@ TEST_ONLY_AUTHOR_WHITELIST: List[str] = [
     "tri duc",
 ]
 
+# Cooldown chống Spam cấp độ khách hàng: Nếu một khách hàng vừa được rep trong vòng 5-10 phút gần nhất, KHÔNG ĐƯỢC rep tiếp liên tục.
+CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS: float = 300.0  # 5 phút (300 giây)
+
 
 def is_system_label(text: str) -> bool:
     """Kiểm tra một chuỗi có phải là nhãn hệ thống/nút bấm của Facebook hay không."""
