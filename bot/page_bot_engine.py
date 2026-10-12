@@ -1080,6 +1080,16 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             return blacklist.some(b => low.includes(b));
         };
 
+        const isBadgeString = (s) => {
+            if (!s) return false;
+            const low = s.toLowerCase().trim();
+            return low === 'tác giả' || low === 'author' ||
+                   low === 'tác giả bài viết' || low === 'post author' ||
+                   low.startsWith('tác giả ·') || low.startsWith('author ·') ||
+                   low.startsWith('tác giả •') || low.startsWith('author •') ||
+                   low.startsWith('tác giả -') || low.startsWith('author -');
+        };
+
         // Tìm tất cả articles trong vùng hiển thị chi tiết bài viết (ưu tiên x > 300 nếu là 3 cột, hoặc toàn bộ nếu mở đơn bài)
         let allArticles = Array.from(document.querySelectorAll('[role="article"]'))
             .filter(el => {
@@ -1132,28 +1142,46 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
             const lowerAria = aria.toLowerCase();
             const lowerInner = inner.toLowerCase();
 
+            let hasAuthorBadge = false;
+
             // Trích xuất tên tác giả
             let authorName = "";
             const mAria = aria.match(/Bình luận dưới tên\s+(.+?)(?:\s+vào\s+|$)/i) ||
-                          aria.match(/Comment by\s+(.+?)(?:\s+ago|\s+at|\s+on|$)/i);
+                          aria.match(/Comment by\s+(.+?)(?:\s+\d+\s*(?:s|m|h|d|w|y|sec|min|hour|day|week|month|year)s?\s+ago|\s+ago|\s+at|\s+on|$)/i);
             if (mAria && mAria[1]) {
-                authorName = mAria[1].trim();
+                const rawAuthor = mAria[1].trim();
+                if (isBadgeString(rawAuthor)) {
+                    hasAuthorBadge = true;
+                } else if (!isSystemString(rawAuthor)) {
+                    authorName = rawAuthor;
+                }
             }
 
             const lines = inner.split('\n').map(s => s.trim()).filter(Boolean);
 
-            if (!authorName || isSystemString(authorName)) {
-                const authorBtn = art.querySelector('div[role="button"]:not([aria-label]), a[role="link"], span[dir="auto"]');
-                if (authorBtn && authorBtn.innerText) {
-                    const cand = authorBtn.innerText.trim();
-                    if (!isSystemString(cand) && cand.length >= 2 && cand.length <= 50) {
-                        authorName = cand;
+            if (!authorName || isSystemString(authorName) || isBadgeString(authorName)) {
+                const authorBtns = Array.from(art.querySelectorAll('div[role="button"]:not([aria-label]), a[role="link"], span[dir="auto"]'));
+                for (const btn of authorBtns) {
+                    if (btn && btn.innerText) {
+                        const cand = btn.innerText.trim();
+                        if (isBadgeString(cand)) {
+                            hasAuthorBadge = true;
+                            continue;
+                        }
+                        if (!isSystemString(cand) && cand.length >= 2 && cand.length <= 50) {
+                            authorName = cand;
+                            break;
+                        }
                     }
                 }
             }
 
-            if (!authorName || isSystemString(authorName)) {
+            if (!authorName || isSystemString(authorName) || isBadgeString(authorName)) {
                 for (const line of lines) {
+                    if (isBadgeString(line)) {
+                        hasAuthorBadge = true;
+                        continue;
+                    }
                     if (!isSystemString(line) && line.length >= 2 && line.length <= 50 && !line.includes('tuần') && !line.includes('ngày') && !line.includes('phút') && !line.includes('giờ') && line !== '·') {
                         authorName = line;
                         break;
@@ -1161,39 +1189,45 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
                 }
             }
 
+            if (isBadgeString(authorName)) {
+                hasAuthorBadge = true;
+                authorName = "";
+            }
+
             // Nhận diện huy hiệu "Tác giả" / "Author" trên comment article:
-            // 1. Loại trừ tên người bình luận khỏi aria-label để tránh nhận nhầm khách hàng có tên chứa 'Author'/'Tác giả'
-            const ariaWithoutAuthor = (mAria && mAria[1] ? aria.replace(mAria[1], '') : (authorName ? aria.replace(authorName, '') : aria)).toLowerCase();
-            const hasAuthorBadge = ariaWithoutAuthor.includes("tác giả") ||
-                                   ariaWithoutAuthor.includes("author") ||
-                                   lines.some(l => {
-                                       if (l === authorName) return false;
-                                       const low = l.toLowerCase();
-                                       return low === 'tác giả' || low === 'author' ||
-                                              low.startsWith('tác giả ·') || low.startsWith('author ·') ||
-                                              low.startsWith('tác giả •') || low.startsWith('author •');
-                                   }) ||
-                                   Boolean(art.querySelector('[aria-label*="tác giả" i]:not([role="article"]), [aria-label*="author" i]:not([role="article"]), [aria-label*="badge" i]:not([role="article"]), [title*="tác giả" i]:not([role="article"]), [title*="author" i]:not([role="article"]), [title*="badge" i]:not([role="article"]), [data-badge]')) ||
-                                   Boolean(art.querySelector('svg[aria-label*="tác giả" i], svg[aria-label*="author" i], svg[aria-label*="badge" i]'));
+            // 1. Loại trừ tên người bình luận và nội dung sau dấu ':' (nếu aria-label chứa cả bình luận khách)
+            const ariaHeader = (mAria && mAria[1] ? aria.replace(mAria[1], '') : (authorName ? aria.replace(authorName, '') : aria)).split(':')[0].toLowerCase();
+            hasAuthorBadge = hasAuthorBadge ||
+                             ariaHeader.includes("tác giả") ||
+                             ariaHeader.includes("author") ||
+                             lines.some(l => {
+                                 if (l === authorName) return false;
+                                 return isBadgeString(l);
+                             }) ||
+                             Boolean(art.querySelector('[aria-label*="tác giả" i]:not([role="article"]), [aria-label*="author" i]:not([role="article"]), [aria-label*="badge" i]:not([role="article"]), [title*="tác giả" i]:not([role="article"]), [title*="author" i]:not([role="article"]), [title*="badge" i]:not([role="article"]), [data-badge]')) ||
+                             Boolean(art.querySelector('svg[aria-label*="tác giả" i], svg[aria-label*="author" i], svg[aria-label*="badge" i]'));
 
             // Kiểm tra xem article này là phản hồi của chính Fanpage hoặc Tác giả:
             // - Khớp tên tác giả (lowAuthor, mAria, authorHeaderLine) với PAGE_NAMES
             // - Hoặc article có huy hiệu Tác giả / Author
-            const lowAuthor = (authorName || '').toLowerCase();
-            const authorHeaderLine = lines.length > 0 ? lines[0].toLowerCase() : '';
-            const secondAuthorHeader = (lines.length > 1 && (authorHeaderLine === 'tác giả' || authorHeaderLine === 'author')) ? lines[1].toLowerCase() : '';
+            const lowAuthor = (authorName || '').toLowerCase().trim();
+            const authorHeaderLine = lines.length > 0 ? lines[0].toLowerCase().trim() : '';
+            const secondAuthorHeader = (lines.length > 1 && isBadgeString(authorHeaderLine)) ? lines[1].toLowerCase().trim() : '';
+
+            const isPageNameMatch = (cand) => {
+                if (!cand) return false;
+                return pageNames.some(p => cand === p || cand.startsWith(p + ' ·') || cand.startsWith(p + ' •') || cand.startsWith(p + ' - ') || cand.startsWith(p + ' – '));
+            };
+
             let isPageReply = hasAuthorBadge ||
                               lowerAria.includes("dưới tên dần86farm") ||
                               lowerAria.includes("dưới tên dan86") ||
-                              pageNames.some(p => (mAria && mAria[1] && mAria[1].toLowerCase().includes(p)) ||
+                              pageNames.some(p => (mAria && mAria[1] && (mAria[1].toLowerCase().trim() === p || mAria[1].toLowerCase().includes(p))) ||
                                                   (lowAuthor && (lowAuthor === p || lowAuthor.includes(p))) ||
                                                   lowerAria.includes("dưới tên " + p) ||
-                                                  lowerAria.includes("comment by " + p) ||
-                                                  (authorHeaderLine && (authorHeaderLine === p || authorHeaderLine.startsWith(p))) ||
-                                                  (secondAuthorHeader && (secondAuthorHeader === p || secondAuthorHeader.startsWith(p))) ||
-                                                  lowerInner.startsWith(p) ||
-                                                  lowerInner.startsWith("tác giả\n" + p) ||
-                                                  lowerInner.startsWith("author\n" + p));
+                                                  lowerAria.includes("comment by " + p)) ||
+                              isPageNameMatch(authorHeaderLine) ||
+                              isPageNameMatch(secondAuthorHeader);
 
             // Trích xuất dấu thời gian độc lập để kiểm tra bình luận cũ (tránh lọc nhầm nội dung khách)
             let timeStr = "";

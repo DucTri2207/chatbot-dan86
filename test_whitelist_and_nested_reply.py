@@ -312,13 +312,13 @@ class TestWhitelistAndNestedReply(unittest.TestCase):
         const fn = {js};
         const pageNames = {page_names_json};
 
-        const makeEl = (aria, text, left = 350, querySelectorResult = null) => ({{
+        const makeEl = (aria, text, left = 350, querySelectorResult = null, querySelectorAllResult = null) => ({{
           getAttribute: (a) => a === "aria-label" ? aria : "",
           setAttribute: () => {{}},
           removeAttribute: () => {{}},
           innerText: text,
           children: [],
-          querySelectorAll: () => [],
+          querySelectorAll: (sel) => querySelectorAllResult ? querySelectorAllResult(sel) : [],
           querySelector: (sel) => querySelectorResult ? querySelectorResult(sel) : null,
           closest: () => null,
           getBoundingClientRect: () => ({{ left: left, top: 100, height: 50 }})
@@ -539,9 +539,79 @@ class TestWhitelistAndNestedReply(unittest.TestCase):
           throw new Error("Scenario 12 failed (Customer says Chào Dần 86): Expected unreplied_count == 1, got " + res12.unreplied_count);
         }}
 
+        // Scenario 13 (Huy hiệu tác giả dòng đầu): Page reply có chữ 'Tác giả' ở dòng 0 trước tên người quản lý/Shop
+        const doc13 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách Hàng vào 2 giờ trước", "Khách Hàng\\n2 giờ\\nCho mình hỏi giá\\nTrả lời\\nGửi tin nhắn\\nẨn", 350),
+                makeEl("", "Tác giả\\nShop\\n1 giờ\\nDạ em đã nhắn tin ạ\\nTrả lời\\nẨn", 380)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc13;
+        const res13 = fn(pageNames);
+        if (res13.unreplied_count !== 0) {{
+          throw new Error("Scenario 13 failed (Tác giả badge on line 0): Expected unreplied_count == 0, got " + res13.unreplied_count);
+        }}
+
+        // Scenario 14 (Chống nhận nhầm): Khách hỏi câu bắt đầu bằng 'quà tặng thuần việt' nhưng innerText chỉ chứa câu hỏi, tên khách ở aria-label
+        const doc14 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Lan Hương vào 5 phút trước", "quà tặng thuần việt giá bao nhiêu vậy shop?\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc14;
+        const res14 = fn(pageNames);
+        if (res14.unreplied_count !== 1 || res14.author_name !== "Lan Hương") {{
+          throw new Error("Scenario 14 failed (Customer question without author header in innerText): Expected unreplied_count == 1, got " + res14.unreplied_count);
+        }}
+
+        // Scenario 15 (Huy hiệu tác giả trong span): Page reply có span[dir=auto] chứa 'Tác giả' trước tên người quản lý
+        const doc15 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Khách Hàng vào 2 giờ trước", "Khách Hàng\\n2 giờ\\nCho mình hỏi giá\\nTrả lời\\nGửi tin nhắn\\nẨn", 350),
+                makeEl("", "Người Quản Lý\\n1 giờ\\nDạ em đã nhắn tin ạ\\nTrả lời\\nẨn", 380, null, (sel) => sel.includes('span[dir="auto"]') ? [{{ innerText: 'Tác giả' }}] : [])
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc15;
+        const res15 = fn(pageNames);
+        if (res15.unreplied_count !== 0) {{
+          throw new Error("Scenario 15 failed (span[dir=auto] Tác giả badge): Expected unreplied_count == 0, got " + res15.unreplied_count);
+        }}
+
+        // Scenario 16 (Chống nhận nhầm): Khách hỏi có nhắc chữ 'tác giả' trong aria-label có chứa cả nội dung bình luận
+        const doc16 = {{
+          querySelectorAll: (sel) => {{
+            if (sel === '[role="article"]') {{
+              return [
+                makeEl("Bình luận dưới tên Lan Hương vào 2 phút trước: Tác giả cho em hỏi giá bao nhiêu", "Lan Hương\\n2 phút\\nTác giả cho em hỏi giá bao nhiêu\\nTrả lời\\nGửi tin nhắn\\nẨn", 350)
+              ];
+            }}
+            return [];
+          }}
+        }};
+        global.document = doc16;
+        const res16 = fn(pageNames);
+        if (res16.unreplied_count !== 1 || res16.author_name !== "Lan Hương") {{
+          throw new Error("Scenario 16 failed (Customer mentions tác giả in aria-label with text): Expected unreplied_count == 1, got " + res16.unreplied_count);
+        }}
+
         console.log("ALL_SCENARIOS_OK");
         """
-        res = subprocess.run(["node", "-e", node_script], capture_output=True, text=True, check=True)
+        res = subprocess.run(["node"], input=node_script, capture_output=True, text=True, check=True, encoding="utf-8")
         self.assertIn("ALL_SCENARIOS_OK", res.stdout)
 
 
