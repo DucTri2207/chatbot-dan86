@@ -291,13 +291,21 @@ class BotMemoryStore:
                                 r_text = normalize_text(rv.get("comment_text", ""))
                                 if r_text and r_text != norm_cmt:
                                     continue
+                        else:
+                            # Khi chưa biết post_id (vd quét từ trang thông báo):
+                            # Nếu có comment_text và nội dung khác với bình luận đã rep trước đó:
+                            # Cho phép phản hồi bình luận mới, KHÔNG bị chặn oan!
+                            if norm_cmt:
+                                r_text = normalize_text(rv.get("comment_text", ""))
+                                if r_text and r_text != norm_cmt:
+                                    continue
 
                         diff = current_time - r_ts
                         if -5 <= diff < cooldown_seconds:
                             return True
 
-        # 2. Kiểm tra trong các cuộc hội thoại inbox (chỉ khi không giới hạn theo bài viết cụ thể)
-        if not target_pid:
+        # 2. Kiểm tra trong các cuộc hội thoại inbox (chỉ khi không giới hạn theo bài viết cụ thể và không phải kiểm tra bình luận)
+        if not target_pid and not norm_cmt:
             for tk, tv in self.data.get("conversations", {}).items():
                 if isinstance(tv, dict):
                     c_name = normalize_text(tv.get("customer_name", ""))

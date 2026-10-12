@@ -385,6 +385,22 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
         "nhắc đến bạn trong một bình luận",
         "mentioned you in a comment",
         "mentioned your page in a comment",
+        "đã gắn thẻ bạn trong một bình luận",
+        "đã gắn thẻ trang của bạn trong một bình luận",
+        "đã gắn thẻ bạn",
+        "gắn thẻ bạn trong một bình luận",
+        "gắn thẻ trang của bạn trong một bình luận",
+        "gắn thẻ bạn",
+        "đã gắn thẻ",
+        "gắn thẻ",
+        "tagged you in a comment",
+        "tagged your page in a comment",
+        "tagged you",
+        "tagged your page",
+        "đã thêm một bình luận",
+        "thêm một bình luận",
+        "đã viết một bình luận",
+        "viết một bình luận",
     ]
     has_kw = any(kw in lower for kw in comment_keywords)
     if not has_kw:
@@ -399,7 +415,7 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
     # 2. Trích xuất tên tác giả
     author_name = ""
     match_author = re.search(
-        r"^(.+?)\s+(?:đã bình luận|commented|đã phản hồi|replied|đã trả lời|bình luận về|phản hồi về|trả lời bình luận|đã nhắc đến|nhắc đến|mentioned)\b",
+        r"^(.+?)\s+(?:đã bình luận|commented|đã phản hồi|replied|đã trả lời|bình luận về|phản hồi về|trả lời bình luận|đã nhắc đến|nhắc đến|mentioned|đã gắn thẻ|gắn thẻ|tagged|đã thêm một bình luận|thêm một bình luận|đã viết một bình luận|viết một bình luận)\b",
         clean_raw,
         re.IGNORECASE,
     )
@@ -435,9 +451,16 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
 
     snippet = clean_comment_text(snippet)
 
+    # Tạo chuỗi text loại bỏ snippet bình luận để regex thời gian không bắt nhầm số/đơn vị thời gian trong câu của khách
+    text_for_time = clean_raw
+    if quote_match:
+        text_for_time = clean_raw[:quote_match.start()] + " " + clean_raw[quote_match.end():]
+    elif colon_match:
+        text_for_time = clean_raw[:colon_match.start()] + " " + clean_raw[colon_match.end():]
+
     # 4. Trích xuất timestamp tương đối
     time_str = ""
-    dot_match = re.search(r"[·•]\s*([^\n]+)$", clean_raw)
+    dot_match = re.search(r"[·•]\s*([^\n]+)$", text_for_time)
     if dot_match:
         cand_time = dot_match.group(1).strip()
         if re.search(
@@ -448,13 +471,14 @@ def parse_notification_text(text: str) -> Dict[str, Any]:
             time_str = cand_time
 
     if not time_str:
-        time_match = re.search(
+        # Tìm match cuối cùng trong text_for_time để ưu tiên timestamp ở đuôi thông báo
+        all_time_matches = list(re.finditer(
             r"\b(\d+\s*(?:giây|phút|giờ|ngày|tuần|tháng|năm|s|m|h|d|w|y|secs?|mins?|hours?|days?|weeks?|months?|years?)(?:\s+(?:trước|ago))?|vừa xong|just now|vài giây)\b",
-            clean_raw,
+            text_for_time,
             re.IGNORECASE,
-        )
-        if time_match:
-            time_str = time_match.group(1).strip()
+        ))
+        if all_time_matches:
+            time_str = all_time_matches[-1].group(1).strip()
 
     # 5. Kiểm tra thời gian cũ
     is_old = is_old_comment_timestamp(time_str)
@@ -1121,6 +1145,9 @@ async def inspect_comment_panel(page: Page) -> Dict[str, Any]:
         // Lấy danh sách tất cả các bình luận khách MỚI (!c.isOldComment) chưa có Page trả lời HOẶC chưa được gửi tin nhắn riêng
         const unrepliedList = parsedComments.filter(c => {
             if (c.isPageReply || c.isOldComment) return false;
+            const pLow = (c.innerPreview || '').toLowerCase();
+            const hasTextAction = pLow.includes('trả lời') || pLow.includes('reply') || pLow.includes('phản hồi') || pLow.includes('gửi tin nhắn') || pLow.includes('nhắn tin') || pLow.includes('see chat');
+            if (!c.hasReplyBtn && !c.hasMsgBtn && !hasTextAction) return false;
             if (!c.hasPageReply) return true;
             const mText = (c.msgBtnText || '').toLowerCase();
             const hasMsgBtn = mText.includes('gửi tin nhắn') || mText.includes('nhắn tin') || mText.includes('send message') || mText.includes('see chat') || mText.includes('xem đoạn chat') || !!c.msgBtnText;
@@ -1509,18 +1536,40 @@ async def send_private_inbox_to_commenter(
             if (btn) {
                 const clickNode = btn.closest('button, [role="button"], a') || btn;
                 clickNode.scrollIntoView();
-                clickNode.click();
+                clickNode.setAttribute('data-dan86-msg-btn', 'true');
+                const r = clickNode.getBoundingClientRect();
                 const foundText = (btn.innerText || btn.getAttribute('aria-label') || '').trim();
-                return { clicked: true, text: foundText };
+                return {
+                    clicked: false,
+                    tagged: true,
+                    text: foundText,
+                    coords: {
+                        x: r.x !== undefined ? r.x : r.left,
+                        y: r.y !== undefined ? r.y : r.top,
+                        width: r.width,
+                        height: r.height
+                    }
+                };
             }
-            return { clicked: false, text: '' };
+            return { clicked: false, tagged: false, text: '' };
         }
         """
         try:
             res_click = await page.evaluate(js_click_msg, {"targetIdx": dom_index, "targetAuthor": author_name})
-            if res_click.get("clicked"):
-                clicked_btn = True
+            if res_click.get("tagged"):
                 btn_text_lower = res_click.get("text", "").lower()
+                re_marked_btn = page.locator('[data-dan86-msg-btn="true"]').first
+                if await re_marked_btn.count() > 0:
+                    clicked_btn = await click_element_at_physical_coordinates(page, re_marked_btn, timeout_ms=2500)
+                if not clicked_btn:
+                    c_info = res_click.get("coords")
+                    if c_info and c_info.get("width", 0) > 0 and c_info.get("height", 0) > 0:
+                        cx = c_info["x"] + c_info["width"] / 2.0
+                        cy = c_info["y"] + c_info["height"] / 2.0
+                        clicked_btn = await physical_mouse_click(page, cx, cy)
+                if not clicked_btn and await re_marked_btn.count() > 0:
+                    await safe_click(re_marked_btn, timeout=2500)
+                    clicked_btn = True
                 await human_sleep(2.0, 3.5)
         except Exception as e_js_click:
             logger.debug("Lỗi JS click nút tin nhắn: %s", e_js_click)
@@ -1791,15 +1840,32 @@ async def inspect_notifications_list(page: Page) -> List[Dict[str, Any]]:
                                  lower.includes('phản hồi về') ||
                                  lower.includes('bình luận của') ||
                                  lower.includes('đã nhắc đến') ||
-                                 lower.includes('mentioned');
+                                 lower.includes('mentioned') ||
+                                 lower.includes('đã gắn thẻ') ||
+                                 lower.includes('gắn thẻ') ||
+                                 lower.includes('tagged') ||
+                                 lower.includes('nhắc đến bạn') ||
+                                 lower.includes('nhắc đến trang');
             if (!hasCommentKw) continue;
 
             const r = el.getBoundingClientRect();
             // Thẻ thông báo độc lập có kích thước pixel rõ ràng, tránh bắt nhầm toàn bộ container/feed
             if (r.width < 100 || r.height < 25 || r.height > 250) continue;
 
-            // Bỏ qua nếu phần tử này là container bao bọc một candidate thẻ con khác
-            const containsOtherCard = allCandidates.some(c => c !== el && el.contains(c) && (c.innerText || '').trim().length >= 10);
+            // Bỏ qua nếu phần tử này là container bao bọc một candidate thẻ con khác cũng là thẻ thông báo bình luận
+            const containsOtherCard = allCandidates.some(c => {
+                if (c === el || !el.contains(c)) return false;
+                const cText = (c.innerText || '').toLowerCase().trim();
+                const cHasKw = cText.includes('đã bình luận') || cText.includes('commented') ||
+                               cText.includes('đã phản hồi') || cText.includes('replied') ||
+                               cText.includes('đã trả lời') || cText.includes('bình luận về') ||
+                               cText.includes('phản hồi về') || cText.includes('bình luận của') ||
+                               cText.includes('đã nhắc đến') || cText.includes('mentioned') ||
+                               cText.includes('đã gắn thẻ') || cText.includes('gắn thẻ') || cText.includes('tagged');
+                if (!cHasKw) return false;
+                const cr = c.getBoundingClientRect();
+                return cr.width >= 100 && cr.height >= 25 && cr.height <= 250;
+            });
             if (containsOtherCard) continue;
 
             const keyText = text.slice(0, 120);
@@ -2300,6 +2366,14 @@ async def process_facebook_notifications_tab(
                 cnt = notif_loc.count()
                 if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
                     cnt = await cnt
+                if cnt == 0:
+                    # Nếu trang vừa được điều hướng/tải lại khiến attribute bị xóa:
+                    # Tái phân tích và đánh dấu lại DOM trang hiện tại
+                    await inspect_notifications_list(page)
+                    notif_loc = page.locator(f'[data-dan86-notif-idx="{notif_idx}"]').first
+                    cnt = notif_loc.count()
+                    if asyncio.iscoroutine(cnt) or hasattr(cnt, "__await__"):
+                        cnt = await cnt
                 if cnt > 0:
                     clicked_notif = await click_element_at_physical_coordinates(page, notif_loc, timeout_ms=3000)
             except Exception as e_loc:

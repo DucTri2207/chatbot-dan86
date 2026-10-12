@@ -46,3 +46,72 @@ Whenever a customer sends a direct message to the Fanpage Messenger Inbox (`inbo
 - [ ] GitHub Actions workflow `vps_bot_24_7.yml` on `DucTri2207/chatbot-dan86` is verified in `in_progress` state (no `pending` queue jam) and actively pushing fresh `last_heartbeat_str` updates to `origin/master:state/bot_status.json`.
 
 Keep your final report concise (summary of changes, short diffs, file paths, and verification results).
+
+
+## 2026-10-12T11:03:39Z
+
+This is a single self-contained fix; keep it small and focused.
+
+Working directory: d:\chat bot dan 86
+Integrity mode: development
+
+## Problem & Context
+
+1. **Vấn đề bao phủ bài viết (Toàn bộ bài viết, không chỉ 10-20 bài)**:
+   - Cơ chế hiện tại quét danh sách thread bên trái trong Meta Business Suite Inbox (MAX_THREADS_PER_CYCLE = 10), chỉ nạp tối đa 10-11 bài gần nhất.
+   - Khi khách (hoặc người kiểm thử) bình luận vào bất kỳ bài viết nào nằm ngoài Top 10, bot hoàn toàn không nhìn thấy, dẫn đến tình trạng 'lúc rep lúc không' rất chập chờn.
+   - **Giải pháp dứt điểm**: Sử dụng **Trang Thông báo Fanpage (Facebook Notifications)**:
+     URL: https://business.facebook.com/latest/notifications?asset_id=104011958817512.
+     Bất kể bài viết đăng hôm nay hay 2 năm trước, chỉ cần có bình luận mới, Facebook ngay lập tức đẩy 1 thông báo lên đầu danh sách. Bot bấm vào thông báo là Facebook tự động điều hướng thẳng đến đúng bài viết và đúng comment đó.
+
+2. **Vấn đề định vị nút bấm & ô trả lời lồng nhau (Không suy đoán, lấy tọa độ F12 vật lý)**:
+   - Tránh suy đoán selector mơ hồ.
+   - Sử dụng JavaScript getBoundingClientRect() (tương đương F12 Console) để trích xuất tọa độ pixel thực tế (x, y) của nút 'Trả lời' và nút 'Gửi tin nhắn' ngay trên comment article.
+   - Dùng chuột máy tính click vật lý (page.mouse.click) vào tọa độ đó.
+   - Xác định tọa độ ô nhập phản hồi lồng nhau xuất hiện ngay bên dưới comment (ràng buộc tọa độ Y: comment_y < box_y < comment_y + comment_height + 250), click vật lý vào ô này để gõ câu trả lời -> Enter.
+   - Tuyệt đối cấm gõ vào ô bình luận cấp 1 ở đáy trang bài viết.
+   - Gửi tin nhắn riêng (Private Inbox) cho người bình luận qua popup dialog hoặc See Chat.
+
+3. **Chế độ Thử Nghiệm An Toàn (Whitelist)**:
+   - Tiếp tục duy trì TEST_ONLY_AUTHOR_WHITELIST: ['đức trí', 'trí đức', 'duc tri', 'tri duc'] để bảo vệ khách hàng khác trong suốt quá trình thử nghiệm.
+
+## Requirements
+
+### R1. Module Quét Thông Báo Facebook (Facebook Notifications Scanner)
+- Xây dựng luồng quét thông báo tại https://business.facebook.com/latest/notifications?asset_id=104011958817512:
+  - Lọc các thông báo mới có chứa từ khóa bình luận ('đã bình luận', 'commented').
+  - Trích xuất tên tác giả và thời gian tương đối ('vừa xong', '1 phút', 'vài giây').
+  - Nếu tác giả nằm trong Whitelist (Đức Trí) và chưa có trong memory.replied_comments:
+    - Click vào thông báo để Facebook mở chi tiết bài viết và cuộn tới đúng comment.
+  - Vẫn duy trì cơ chế quét Hộp thư Inbox làm phương án dự phòng (fallback).
+
+### R2. Động Cơ Định Vị Tọa Độ F12 Vật Lý (Coordinate-based DOM Engine)
+- Thay thế hoàn toàn cơ chế phỏng đoán selector bằng trích xuất tọa độ DOM thực tế:
+  - Hàm get_element_coordinates(target_element) trả về {x, y, width, height} chính xác từ getBoundingClientRect().
+  - Click vật lý bằng chuột: page.mouse.click(center_x, center_y).
+  - Sau khi click nút 'Trả lời', đợi ô nhập lồng nhau bung ra trong phạm vi hình học box_y < comment_bottom + 250.
+  - Click chuột vật lý vào ô nhập lồng nhau -> type_human_like -> Enter.
+  - Fail-safe guard: Nếu không tìm thấy ô lồng nhau trong phạm vi tọa độ sát comment, HỦY BỎ thao tác comment để chống văng ra ngoài bài viết.
+  - Định vị tọa độ nút 'Gửi tin nhắn' / 'Nhắn tin' của chính comment đó để gửi inbox riêng.
+
+### R3. Bộ Kiểm Thử & Xác Minh Độc Lập
+- Cập nhật và bổ sung unit test kiểm chứng:
+  - Logic phân tích danh sách thông báo Facebook Notifications.
+  - Logic kiểm tra tọa độ bounding box lọc ô nhập lồng nhau vs ô bài viết đáy trang.
+  - Đảm bảo 100% bộ test hiện tại (72 tests) và test mới đều PASS.
+
+### R4. Triển Khai & Kiểm Chứng Thực Tế Trên VPS 24/7
+- Đẩy mã nguồn lên nhánh master GitHub.
+- Khởi động ca VPS mới trên GitHub Actions.
+- Theo dõi log live xác nhận bot quét qua Thông báo và phản hồi thành công.
+
+## Acceptance Criteria
+
+### Tính Đúng Đắn & Bao Phủ
+- [ ] Bot phát hiện bình luận mới trên TOÀN BỘ bài viết thông qua Trang Thông báo (không bị giới hạn 10-20 bài).
+- [ ] Bình luận phản hồi công khai BẮT BUỘC lồng chuẩn xác bên dưới comment của khách (Nested Reply), 0% khả năng văng ra ngoài bài viết.
+- [ ] Gửi tin nhắn riêng vào Messenger của người bình luận thành công đúng 1 lần.
+- [ ] Sử dụng tọa độ chuột vật lý (F12 Coordinates) để tương tác, không đoán mò selector.
+- [ ] 100% Unit Tests PASS không có lỗi hồi quy.
+- [ ] Khách hàng khác ngoài Đức Trí được bảo vệ 100% bởi TEST_ONLY_AUTHOR_WHITELIST.
+- [ ] VPS GitHub Actions chạy ổn định và đồng bộ memory an toàn.

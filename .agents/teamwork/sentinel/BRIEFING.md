@@ -1,13 +1,13 @@
-# BRIEFING — 2026-10-12T00:08:50Z
+# BRIEFING — 2026-10-12T11:05:50Z
 
 ## Mission
-Audit, harden, and verify 24/7 automated Facebook Fanpage bot running 100% on GitHub Actions VPS with rapid, reliable comment and Messenger handling.
+Ensure 24/7 Facebook Fanpage bot covers all posts via Facebook Notifications and uses F12 physical coordinates for nested reply and private messaging, verified on VPS.
 
 ## 🔒 My Identity
 - Archetype: sentinel
 - Working directory: d:\chat bot dan 86\.agents\teamwork\sentinel
-- Orchestrator: 4bf28db4-319d-4cf9-8678-e34396a5ff32
-- Victory Auditor: 6da0a841-276d-4649-a022-180723c500c8
+- Orchestrator: 1b299cf9-1715-40a1-bdba-0be2e3bd2762
+- Victory Auditor: [to be spawned on victory claim]
 
 ## 🔒 Key Constraints
 - No technical decisions — relay only
@@ -16,19 +16,18 @@ Audit, harden, and verify 24/7 automated Facebook Fanpage bot running 100% on Gi
 - Subagent model routing: use flash for subagents per user global rules.
 
 ## User Context
-- **Last user request**: Audit, harden, and verify the 24/7 Facebook Fanpage bot for 100% cloud VPS operation, rapid comment & Messenger handling, zero local execution, and verified live heartbeat.
+- **Last user request**: Single self-contained fix: Facebook Notifications Scanner for 100% post coverage + F12 physical coordinates DOM engine for nested replies and private messaging + Unit tests & VPS deployment.
 - **Pending clarifications**: none
 - **Delivered results**: none
 
 ## Project Status
-- **Phase**: auditing
+- **Phase**: in progress
 
 ## Victory Audit Status
-- **Triggered**: yes
+- **Triggered**: no
 - **Verdict**: pending
 - **Retry count**: 0
 
 ## Artifact Index
 - d:\chat bot dan 86\.agents\teamwork\ORIGINAL_REQUEST.md — Authoritative user request record
-- d:\chat bot dan 86\.agents\teamwork\teamwork_preview_orchestrator_1 — Orchestrator workspace
-- d:\chat bot dan 86\.agents\teamwork\teamwork_preview_victory_auditor_1 — Victory Auditor workspace
+- d:\chat bot dan 86\.agents\teamwork\teamwork_preview_swe_3 — SWE Light workspace
