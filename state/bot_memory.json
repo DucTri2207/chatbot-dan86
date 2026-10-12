@@ -274,6 +274,17 @@
       "post_id": "723877476830954",
       "dom_index": 1,
       "inbox_attempts": 1
+    },
+    "cmt:693576193194416:1:3999d9300c3432a4": {
+      "author": "Đức Trí",
+      "comment_text": ".",
+      "public_reply": "Dạ chào Đức Trí, DAN86 đã gửi thông tin chi tiết và bảng giá set quà vào tin nhắn cho mình rồi ạ. Bạn kiểm tra hộp thư/tin nhắn chờ giúp shop nhé! ❤️",
+      "private_inbox_sent": true,
+      "private_reply_text": "Chào Đức Trí, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\n📞 Hotline / Zalo tư vấn nhanh: 0933 133 516\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
+      "replied_at": 1791795799.0762942,
+      "post_id": "693576193194416",
+      "dom_index": 1,
+      "inbox_attempts": 1
     }
   },
   "conversations": {
@@ -359,8 +370,8 @@
       "stage": 1,
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
-      "last_bot_reply_ts": 1791794275.253198,
-      "last_interaction_ts": 1791795298.922914
+      "last_bot_reply_ts": 1791795799.0762942,
+      "last_interaction_ts": 1791795870.4947345
     },
     "tid:100007295343728": {
       "customer_name": "Baochau Haphan",
@@ -400,8 +411,8 @@
     }
   },
   "stats": {
-    "comments_replied": 34,
-    "private_inboxes_from_comment": 19,
+    "comments_replied": 35,
+    "private_inboxes_from_comment": 20,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
