@@ -249,12 +249,14 @@ class BotMemoryStore:
         customer_name: str,
         cooldown_seconds: float = 300.0,
         now_ts: Optional[float] = None,
+        post_id: str = "",
+        comment_text: str = "",
     ) -> bool:
         """
         Kiểm tra khách hàng có đang trong thời gian cooldown chống spam hay không.
-        Nếu khách hàng vừa được rep (comment hoặc inbox) trong vòng cooldown_seconds (mặc định 5 phút = 300s),
-        trả về True.
-        Hỗ trợ nhận diện đảo ngữ tên khách (ví dụ: 'Đức Trí' và 'Trí Đức').
+        - Nếu có post_id: Chỉ áp dụng cooldown trên chính bài viết đó (tránh rep lặp trên cùng bài viết,
+          nhưng khi khách bình luận trên bài viết khác hoặc có bình luận mới thì vẫn được phản hồi ngay lập tức!).
+        - Hỗ trợ nhận diện đảo ngữ tên khách (ví dụ: 'Đức Trí' và 'Trí Đức').
         """
         from bot.bot_config import clean_customer_name
         clean_name = clean_customer_name(customer_name) if customer_name else ""
@@ -264,34 +266,50 @@ class BotMemoryStore:
 
         current_time = now_ts if now_ts is not None else time.time()
         norm_words = set(norm_name.split())
+        target_pid = str(post_id).strip()
+        norm_cmt = normalize_text(comment_text) if comment_text else ""
 
         # 1. Kiểm tra trong các bình luận đã trả lời
         for rk, rv in self.data.get("replied_comments", {}).items():
             if isinstance(rv, dict):
                 r_author = normalize_text(rv.get("author", ""))
                 r_ts = float(rv.get("replied_at", 0))
+                r_pid = str(rv.get("post_id", "")).strip()
+
                 if r_author:
                     is_match = (r_author == norm_name) or (
                         len(norm_words) > 1 and norm_words == set(r_author.split())
                     )
                     if is_match:
+                        # Nếu có chỉ định post_id: chỉ tính cooldown trên cùng bài viết đó
+                        if target_pid:
+                            match_post = (target_pid == r_pid) or (target_pid in rk)
+                            if not match_post:
+                                continue
+                            # Nếu có comment_text và nội dung khác nhau: cho phép phản hồi câu mới
+                            if norm_cmt:
+                                r_text = normalize_text(rv.get("comment_text", ""))
+                                if r_text and r_text != norm_cmt:
+                                    continue
+
                         diff = current_time - r_ts
                         if -5 <= diff < cooldown_seconds:
                             return True
 
-        # 2. Kiểm tra trong các cuộc hội thoại inbox
-        for tk, tv in self.data.get("conversations", {}).items():
-            if isinstance(tv, dict):
-                c_name = normalize_text(tv.get("customer_name", ""))
-                last_reply = float(tv.get("last_bot_reply_ts", 0))
-                if c_name:
-                    is_match = (c_name == norm_name) or (
-                        len(norm_words) > 1 and norm_words == set(c_name.split())
-                    )
-                    if is_match:
-                        diff = current_time - last_reply
-                        if -5 <= diff < cooldown_seconds:
-                            return True
+        # 2. Kiểm tra trong các cuộc hội thoại inbox (chỉ khi không giới hạn theo bài viết cụ thể)
+        if not target_pid:
+            for tk, tv in self.data.get("conversations", {}).items():
+                if isinstance(tv, dict):
+                    c_name = normalize_text(tv.get("customer_name", ""))
+                    last_reply = float(tv.get("last_bot_reply_ts", 0))
+                    if c_name:
+                        is_match = (c_name == norm_name) or (
+                            len(norm_words) > 1 and norm_words == set(c_name.split())
+                        )
+                        if is_match:
+                            diff = current_time - last_reply
+                            if -5 <= diff < cooldown_seconds:
+                                return True
 
         return False
 

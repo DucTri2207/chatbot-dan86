@@ -321,7 +321,7 @@ async def verify_logged_in(page: Page) -> bool:
 
                 page.context.on("page", on_sso_page)
                 try:
-                    await loc.click()
+                    await loc.click(timeout=5000, force=True)
                     try:
                         popup = await asyncio.wait_for(popup_future, timeout=6.0)
                         await popup.wait_for_load_state("domcontentloaded")
@@ -334,6 +334,7 @@ async def verify_logged_in(page: Page) -> bool:
                             'div:has-text("Tiếp tục"), '
                             'a:has-text("Tiếp tục"), '
                             '[aria-label*="Tiếp tục"], '
+                            'button[name="__CONFIRM__"], '
                             'div[role="button"]:has-text("Continue"), '
                             'button:has-text("Continue")'
                         ).first
@@ -356,19 +357,34 @@ async def verify_logged_in(page: Page) -> bool:
                                     pass
                                 sso_success = False
                             else:
-                                # Chờ tối đa 3s cho popup tự đóng hoặc chuyển hướng
+                                # Chờ tối đa 6s cho popup tự đóng hoặc chuyển hướng
                                 try:
-                                    await popup.wait_for_event("close", timeout=3000)
+                                    await popup.wait_for_event("close", timeout=6000)
                                     sso_success = True
                                 except Exception:
                                     if not popup.is_closed():
+                                        pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                                        if pass_count > 0:
+                                            sso_success = False
+                                        else:
+                                            sso_success = True
                                         try:
                                             await popup.close()
                                         except Exception:
                                             pass
-                                    sso_success = True
+                                    else:
+                                        sso_success = True
                     except Exception as e_pop:
                         logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
+                        # Kiểm tra xem chính tab hiện tại có đang tự chuyển hướng không (direct navigation)
+                        try:
+                            await page.wait_for_load_state("domcontentloaded", timeout=3000)
+                        except Exception:
+                            pass
+                        cur_p = urllib.parse.urlparse(page.url).path.lower()
+                        if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
+                            logger.info("Trang chính đã tự chuyển hướng thành công mà không cần popup: %s", page.url[:80])
+                            sso_success = True
                     finally:
                         try:
                             page.context.remove_listener("page", on_sso_page)
@@ -385,14 +401,26 @@ async def verify_logged_in(page: Page) -> bool:
                         pass
 
         if clicked and sso_success:
-            # Điều hướng trang chính tới thẳng URL inbox mục tiêu
+            # Chờ trang chính tự chuyển hướng hoặc chủ động điều hướng tới URL inbox mục tiêu
             try:
-                await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
+                for _ in range(6):
+                    await asyncio.sleep(0.5)
+                    cur_p = urllib.parse.urlparse(page.url).path.lower()
+                    if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
+                        break
+                cur_p = urllib.parse.urlparse(page.url).path.lower()
+                if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+                    await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
                 await human_sleep(2.0, 3.5)
             except Exception as e_nav:
                 logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
         elif clicked and not sso_success:
-            return False
+            # Kiểm tra phòng vệ cuối cùng xem trang chính có tự về inbox không
+            cur_p = urllib.parse.urlparse(page.url).path.lower()
+            if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
+                pass
+            else:
+                return False
 
     # Đánh giá lại trạng thái sau chuyển hướng
     parsed = urllib.parse.urlparse(page.url)
@@ -400,7 +428,7 @@ async def verify_logged_in(page: Page) -> bool:
 
     if "checkpoint" in path:
         return False
-    if "/business/loginpage" in path or path == "/login" or path == "/login/":
+    if "/business/loginpage" in path or path.startswith("/login"):
         return False
 
     # Kiểm tra xác nhận lần cuối qua sự tồn tại của UI Hộp thư
@@ -411,9 +439,12 @@ async def verify_logged_in(page: Page) -> bool:
         except Exception:
             pass
     else:
-        # Nếu path không chứa login và cũng không có form đăng nhập, nhưng chưa rõ UI:
-        # Kiểm tra xem trang có form đăng nhập bất kỳ không
+        # Nếu không có bất kỳ chỉ báo Hộp thư nào:
+        # 1. Nếu có form đăng nhập: chắc chắn chưa đăng nhập
         if await page.locator('input[name="email"], input[name="pass"]').count() > 0:
+            return False
+        # 2. Nếu URL không phải là trang inbox của Meta: không xác nhận thành công bừa bãi
+        if "/latest/inbox" not in path:
             return False
 
     # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
@@ -1430,13 +1461,18 @@ async def process_facebook_comments_tab(
                             logger.info("Chế độ thử nghiệm an toàn: Bỏ qua khách [%s] (Chỉ tương tác với Đức Trí trong phiên sửa lỗi này).", cand_author)
                             continue
 
-                    # Bổ sung cơ chế Cooldown chống Spam cấp độ khách hàng:
-                    # Nếu một khách hàng (ví dụ Đức Trí) vừa được rep trong vòng 5-10 phút gần nhất, KHÔNG ĐƯỢC rep tiếp liên tục để chống spam hoàn toàn
-                    if memory.is_customer_in_cooldown(cand_author, cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS):
+                    # Bổ sung cơ chế Cooldown chống Spam lặp cùng bình luận trên cùng bài viết
+                    if memory.is_customer_in_cooldown(
+                        cand_author,
+                        cooldown_seconds=CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
+                        post_id=post_id,
+                        comment_text=cand_text,
+                    ):
                         logger.info(
-                            "Khách hàng [%s] vừa được phản hồi gần đây (Cooldown chống spam %.0f phút). Bỏ qua hoàn toàn!",
+                            "Khách hàng [%s] vừa được phản hồi bình luận này trên bài [%s] (Cooldown %.0fs). Bỏ qua lặp!",
                             cand_author,
-                            CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS / 60,
+                            post_id,
+                            CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS,
                         )
                         continue
 
@@ -1455,7 +1491,7 @@ async def process_facebook_comments_tab(
                         needs_inbox_only = False
                         break
 
-                    # Nếu cand_has_reply hoặc đã rep công khai nhưng chưa gửi inbox, xử lý needs_inbox_only = True và chỉ gửi 1 lần duy nhất
+                    # Nếu trong memory ĐÃ TỒN TẠI bản ghi (đã rep công khai rồi) nhưng chưa gửi inbox thành công:
                     if comment_key:
                         existing_rec = memory.get_comment_record(
                             comment_key=comment_key,
@@ -1463,13 +1499,11 @@ async def process_facebook_comments_tab(
                             comment_text=cand_text,
                             post_id=post_id,
                         )
-                        # Nếu trên DOM đã có phản hồi (cand_has_reply) hoặc trong memory đã có bản ghi nhưng chưa gửi inbox:
-                        if cand_has_reply or existing_rec:
-                            if not existing_rec or not existing_rec.get("private_inbox_sent"):
-                                target_candidate = cand
-                                target_key = comment_key
-                                needs_inbox_only = True
-                                break
+                        if existing_rec and not existing_rec.get("private_inbox_sent"):
+                            target_candidate = cand
+                            target_key = comment_key
+                            needs_inbox_only = True
+                            break
 
                 # Nếu tất cả các candidate đều đã được xử lý trong memory hoặc không hợp lệ -> Dừng vòng lặp bài này
                 if target_candidate is None:
