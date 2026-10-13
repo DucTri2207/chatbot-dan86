@@ -507,6 +507,14 @@
       "last_bot_reply_ts": 1791853871.3794842,
       "last_interaction_ts": 1791853871.3794842,
       "source": "prior_history"
+    },
+    "name:quý kim dương": {
+      "customer_name": "Quý Kim Dương",
+      "stage": 1,
+      "last_replied_customer_msg": "con mèo này giá sao v",
+      "last_bot_reply_ts": 1791855730.1623783,
+      "last_interaction_ts": 1791855730.1623783,
+      "source": "prior_history"
     }
   },
   "stats": {
