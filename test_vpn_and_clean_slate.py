@@ -1,4 +1,5 @@
 import asyncio
+import json
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -63,6 +64,77 @@ class TestVpnGateModule(unittest.TestCase):
             self.assertIn("auth-user-pass", conf_content)
             self.assertIn("auth-nocache", conf_content)
 
+    def test_normalize_country(self):
+        """Kiểm tra chuẩn hóa tên và mã quốc gia sang dạng chuẩn ISO-2 VN."""
+        self.assertEqual(vpn_module.normalize_country("VN"), "VN")
+        self.assertEqual(vpn_module.normalize_country("Vietnam"), "VN")
+        self.assertEqual(vpn_module.normalize_country("Viet Nam"), "VN")
+        self.assertEqual(vpn_module.normalize_country("VNM"), "VN")
+        self.assertEqual(vpn_module.normalize_country("US"), "US")
+        self.assertEqual(vpn_module.normalize_country(None), "")
+
+    def test_get_current_ip_info_with_ipinfo_success(self):
+        """Đảm bảo get_current_ip_info trích xuất chuẩn IP và Country từ dịch vụ GeoIP."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "ip": "117.5.142.217",
+            "country": "VN",
+            "city": "Ho Chi Minh City",
+            "org": "Viettel",
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            info = vpn_module.get_current_ip_info()
+
+        self.assertEqual(info["ip"], "117.5.142.217")
+        self.assertEqual(info["country"], "VN")
+        self.assertEqual(info["city"], "Ho Chi Minh City")
+
+    def test_get_current_ip_info_with_ip_api_normalizes_vietnam(self):
+        """Đảm bảo khi dịch vụ trả về country: 'Vietnam', hàm chuẩn hóa thành 'VN'."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "query": "14.161.1.2",
+            "country": "Vietnam",
+            "city": "Da Nang",
+            "isp": "VNPT",
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            info = vpn_module.get_current_ip_info()
+
+        self.assertEqual(info["ip"], "14.161.1.2")
+        self.assertEqual(info["country"], "VN")
+        self.assertEqual(info["city"], "Da Nang")
+
+    def test_get_current_ip_info_all_fail_returns_unknown(self):
+        """Khi tất cả dịch vụ GeoIP gặp sự cố, hàm fallback an toàn không gây sập."""
+        with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
+            info = vpn_module.get_current_ip_info()
+
+        self.assertEqual(info["ip"], "Unknown")
+        self.assertEqual(info["country"], "Unknown")
+
+    @patch("shutil.which", return_value=None)
+    def test_connect_vpn_missing_openvpn_returns_false(self, mock_which):
+        """Khi openvpn chưa được cài đặt, connect_vpn bỏ qua an toàn và trả về False."""
+        server = {"ovpn_b64": "Y2xpZW50Cg==", "ip": "1.2.3.4", "ping": 10, "speed": 1000}
+        res = vpn_module.connect_vpn(server, timeout_sec=2)
+        self.assertFalse(res)
+
+    @patch("shutil.which", return_value="/usr/sbin/openvpn")
+    @patch("subprocess.Popen")
+    @patch("scripts.connect_vn_vpn.get_current_ip_info")
+    @patch("time.sleep", return_value=None)
+    def test_connect_vpn_switches_ip_returns_true(self, mock_sleep, mock_ip, mock_popen, mock_which):
+        """Khi IP chuyển sang Việt Nam thành công, connect_vpn trả về True."""
+        mock_ip.return_value = {"ip": "14.161.1.2", "country": "VN", "city": "Hanoi", "org": "FPT"}
+        server = {"ovpn_b64": "Y2xpZW50Cg==", "ip": "14.161.1.2", "ping": 10, "speed": 1000}
+        res = vpn_module.connect_vpn(server, timeout_sec=5)
+        self.assertTrue(res)
+
     @patch("scripts.connect_vn_vpn.get_current_ip_info")
     def test_main_already_vn_skips_vpn(self, mock_ip):
         """Khi máy đã có IP Việt Nam, main() hoàn thành ngay lập tức không cần kết nối VPN."""
@@ -87,6 +159,23 @@ class TestVpnGateModule(unittest.TestCase):
         }
         res = vpn_module.main()
         self.assertEqual(res, 0)
+
+    @patch("scripts.connect_vn_vpn.get_current_ip_info")
+    @patch("scripts.connect_vn_vpn.connect_vpn")
+    @patch("scripts.connect_vn_vpn.fetch_vn_vpn_servers")
+    def test_main_retries_second_server_if_first_fails(self, mock_fetch, mock_connect, mock_ip):
+        """Khi server #1 thất bại, main() thử tiếp server #2 trước khi fallback."""
+        mock_ip.return_value = {"ip": "20.150.10.5", "country": "US", "city": "Washington", "org": "MS"}
+        mock_fetch.return_value = [
+            {"ip": "14.161.1.1", "ping": 10, "speed": 1000},
+            {"ip": "14.161.1.2", "ping": 20, "speed": 2000},
+        ]
+        # Server 1 fail, server 2 success
+        mock_connect.side_effect = [False, True]
+
+        res = vpn_module.main()
+        self.assertEqual(res, 0)
+        self.assertEqual(mock_connect.call_count, 2)
 
 
 class TestIncognitoCleanSlateReAuth(unittest.IsolatedAsyncioTestCase):

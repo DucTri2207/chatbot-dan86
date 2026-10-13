@@ -34,12 +34,38 @@ MAX_CONNECT_TIMEOUT_SEC = 20
 CHECK_INTERVAL_SEC = 2.0
 
 
+def normalize_country(raw: str) -> str:
+    """Chuẩn hóa mã quốc gia sang dạng chuẩn ISO-2 (VN, US, ...)."""
+    raw_str = (raw or "").strip().upper()
+    if raw_str in ["VN", "VIETNAM", "VIET NAM", "VNM"]:
+        return "VN"
+    return raw_str
+
+
+def ensure_public_dns():
+    """Đảm bảo Linux runner có sẵn DNS công cộng 8.8.8.8 / 1.1.1.1 phòng khi VPN chuyển gateway."""
+    if platform.system().lower() == "linux":
+        try:
+            if os.path.exists("/etc/resolv.conf"):
+                with open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore") as f:
+                    content = f.read()
+                if "8.8.8.8" not in content and "1.1.1.1" not in content:
+                    subprocess.run(
+                        ["sudo", "bash", "-c", "echo 'nameserver 8.8.8.8\nnameserver 1.1.1.1' >> /etc/resolv.conf"],
+                        check=False,
+                        timeout=3,
+                        stdin=subprocess.DEVNULL,
+                    )
+        except Exception as e_dns:
+            logger.debug("Lỗi thiết lập DNS công cộng: %s", e_dns)
+
+
 def get_current_ip_info() -> dict:
-    """Truy vấn thông tin IP hiện tại từ các dịch vụ IP lookup công cộng với timeout ngắn."""
+    """Truy vấn thông tin IP và Quốc gia hiện tại từ các dịch vụ IP lookup công cộng với timeout ngắn."""
     urls = [
-        "https://api.ipify.org?format=json",
         "https://ipinfo.io/json",
         "http://ip-api.com/json",
+        "https://freeipapi.com/api/json",
     ]
     for url in urls:
         try:
@@ -49,19 +75,32 @@ def get_current_ip_info() -> dict:
             )
             with urllib.request.urlopen(req, timeout=2.5) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="ignore"))
-                ip = data.get("ip") or data.get("query")
-                country = data.get("country") or data.get("countryCode")
+                ip = data.get("ip") or data.get("query") or data.get("ipAddress")
+                raw_c = data.get("countryCode") or data.get("country_code") or data.get("country")
                 city = data.get("city", "Unknown")
                 org = data.get("org") or data.get("isp", "Unknown")
-                if ip:
+                country = normalize_country(raw_c)
+                if ip and country:
                     return {
-                        "ip": ip,
-                        "country": (country or "").upper(),
-                        "city": city,
-                        "org": org,
+                        "ip": str(ip).strip(),
+                        "country": country,
+                        "city": str(city).strip(),
+                        "org": str(org).strip(),
                     }
         except Exception:
             continue
+
+    # Fallback dự phòng chỉ lấy IP nếu các dịch vụ GeoIP đều bận
+    try:
+        req = urllib.request.Request("https://api.ipify.org?format=json", headers={"User-Agent": "curl/7.68.0"})
+        with urllib.request.urlopen(req, timeout=2.0) as resp:
+            data = json.loads(resp.read().decode("utf-8", errors="ignore"))
+            ip = data.get("ip")
+            if ip:
+                return {"ip": str(ip).strip(), "country": "Unknown", "city": "Unknown", "org": "Unknown"}
+    except Exception:
+        pass
+
     return {"ip": "Unknown", "country": "Unknown", "city": "Unknown", "org": "Unknown"}
 
 
@@ -151,7 +190,7 @@ def setup_ovpn_file(server: dict, config_path: str, auth_path: str) -> bool:
         "auth-nocache",
         "script-security 2",
         "connect-retry-max 1",
-        "connect-timeout 6",
+        "connect-timeout 8",
         "",
     ]
     ovpn_full = "\n".join(cleaned_lines) + "\n" + "\n".join(extra_opts)
@@ -162,12 +201,13 @@ def setup_ovpn_file(server: dict, config_path: str, auth_path: str) -> bool:
     return True
 
 
-def connect_vpn(server: dict) -> bool:
-    """Khởi chạy OpenVPN ngầm và kiểm tra IP trong 20 giây."""
+def connect_vpn(server: dict, timeout_sec: int = MAX_CONNECT_TIMEOUT_SEC) -> bool:
+    """Khởi chạy OpenVPN ngầm và kiểm tra IP trong khoảng thời gian timeout_sec."""
     is_linux = platform.system().lower() == "linux"
     tmp_dir = "/tmp" if is_linux else os.environ.get("TEMP", os.getcwd())
     config_path = os.path.join(tmp_dir, "dan86_vpn_vn.ovpn")
     auth_path = os.path.join(tmp_dir, "dan86_vpn_auth.txt")
+    log_path = os.path.join(tmp_dir, "dan86_vpn.log")
 
     if not setup_ovpn_file(server, config_path, auth_path):
         return False
@@ -184,9 +224,18 @@ def connect_vpn(server: dict) -> bool:
         logger.warning("Chưa cài đặt OpenVPN trên hệ thống. Bỏ qua kết nối VPN.")
         return False
 
+    # Bảo đảm phân giải tên miền ổn định trên môi trường Linux runner
+    ensure_public_dns()
+
     cmd = []
     if is_linux:
-        # Trên Linux Ubuntu runner, cần quyền sudo để tạo tun interface
+        # Dừng tiến trình openvpn cũ nếu có trước khi khởi tạo tiến trình mới
+        try:
+            subprocess.run(["sudo", "pkill", "openvpn"], check=False, timeout=3, stdin=subprocess.DEVNULL)
+            time.sleep(0.5)
+        except Exception:
+            pass
+
         if shutil.which("sudo"):
             cmd.append("sudo")
         cmd.extend([
@@ -197,29 +246,27 @@ def connect_vpn(server: dict) -> bool:
             "--verb",
             "1",
             "--log",
-            os.path.join(tmp_dir, "dan86_vpn.log"),
+            log_path,
         ])
     else:
         # Trên Windows (nếu chạy local)
         cmd.extend([openvpn_bin, "--config", config_path])
 
     try:
-        # Sử dụng Popen với stdin=DEVNULL để tuyệt đối không block tiến trình
         proc = subprocess.Popen(
             cmd,
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
         )
-        # Chờ 1.5s để daemon khởi tạo
         time.sleep(1.5)
     except Exception as e_launch:
         logger.warning("Không thể khởi động OpenVPN: %s", e_launch)
         return False
 
-    logger.info("OpenVPN daemon đã khởi chạy. Đang kiểm tra IP chuyển đổi (tối đa %ds)...", MAX_CONNECT_TIMEOUT_SEC)
+    logger.info("OpenVPN daemon đã khởi chạy. Đang kiểm tra IP chuyển đổi (tối đa %ds)...", timeout_sec)
     start_time = time.time()
-    while time.time() - start_time < MAX_CONNECT_TIMEOUT_SEC:
+    while time.time() - start_time < timeout_sec:
         time.sleep(CHECK_INTERVAL_SEC)
         info = get_current_ip_info()
         logger.info("IP hiện tại: %s | Quốc gia: %s (%s)", info["ip"], info["country"], info["city"])
@@ -232,11 +279,20 @@ def connect_vpn(server: dict) -> bool:
             )
             return True
 
-    logger.warning("Hết thời gian chờ (%ds) nhưng IP chưa chuyển sang Việt Nam.", MAX_CONNECT_TIMEOUT_SEC)
+    logger.warning("Hết thời gian chờ (%ds) nhưng IP chưa chuyển sang Việt Nam.", timeout_sec)
+    if os.path.exists(log_path):
+        try:
+            with open(log_path, "r", encoding="utf-8", errors="ignore") as f_log:
+                tail_logs = f_log.readlines()[-15:]
+            if tail_logs:
+                logger.debug("Chi tiết nhật ký OpenVPN gần nhất:\n%s", "".join(tail_logs).strip())
+        except Exception:
+            pass
+
     if is_linux:
-        # Dừng daemon nếu kết nối không thành công để trả lại mạng sạch
         try:
             subprocess.run(["sudo", "pkill", "openvpn"], check=False, timeout=3, stdin=subprocess.DEVNULL)
+            time.sleep(1.0)
         except Exception:
             pass
     return False
@@ -262,10 +318,17 @@ def main():
         logger.warning("Không có server Việt Nam nào khả dụng trên VPN Gate lúc này. Tiếp tục chạy với IP mặc định (Fallback).")
         return 0
 
-    # Thử server tốt nhất
-    for idx, srv in enumerate(servers[:1], start=1):
-        logger.info("Thử kết nối server Việt Nam #%d (%s)...", idx, srv["ip"])
-        if connect_vpn(srv):
+    # Thử tối đa 2 server tốt nhất trong ngân sách thời gian an toàn (tối đa 22s)
+    overall_start = time.time()
+    for idx, srv in enumerate(servers[:2], start=1):
+        elapsed = time.time() - overall_start
+        if elapsed >= 20:
+            logger.warning("Đã hết ngân sách thời gian an toàn (20s), dừng thử server tiếp theo.")
+            break
+        remaining_time = max(8, int(22 - elapsed))
+        per_srv_timeout = min(11, remaining_time)
+        logger.info("Thử kết nối server Việt Nam #%d (%s) (timeout: %ds)...", idx, srv["ip"], per_srv_timeout)
+        if connect_vpn(srv, timeout_sec=per_srv_timeout):
             return 0
         logger.warning("Server #%d kết nối thất bại hoặc timeout.", idx)
 
