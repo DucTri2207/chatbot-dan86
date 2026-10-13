@@ -357,6 +357,17 @@
       "post_id": "1162453116306719",
       "dom_index": 1,
       "inbox_attempts": 1
+    },
+    "cmt:1162453116306719:1:0a00ae38a364bc69": {
+      "author": "Đức Trí",
+      "comment_text": "...",
+      "public_reply": "Dạ DAN86 xin chào Đức Trí! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư để shop tư vấn nhanh nhất cho mình nhé! 🎁",
+      "private_inbox_sent": false,
+      "private_reply_text": "Dạ chào Đức Trí ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Bạn có thể xem nhanh các set quà tại website: https://dan86.vn\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791855159.3519533,
+      "post_id": "1162453116306719",
+      "dom_index": 1,
+      "inbox_attempts": 1
     }
   },
   "conversations": {
@@ -499,7 +510,7 @@
     }
   },
   "stats": {
-    "comments_replied": 41,
+    "comments_replied": 42,
     "private_inboxes_from_comment": 23,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
