@@ -530,7 +530,7 @@
       "stage": 1,
       "last_replied_customer_msg": "dạ cảm ơn shop nha",
       "last_bot_reply_ts": 1791813635.9592998,
-      "last_interaction_ts": 1791879438.864315,
+      "last_interaction_ts": 1791879791.1444,
       "source": "prior_history"
     },
     "name:vân kim": {
@@ -561,7 +561,7 @@
       "stage": 1,
       "last_replied_customer_msg": "e xin giá ạ",
       "last_bot_reply_ts": 1791878872.384944,
-      "last_interaction_ts": 1791879433.0286922,
+      "last_interaction_ts": 1791879785.4363177,
       "source": "prior_history"
     },
     "name:thi thi": {
@@ -570,6 +570,14 @@
       "last_replied_customer_msg": "e xin giá ạ",
       "last_bot_reply_ts": 1791878979.8667755,
       "last_interaction_ts": 1791879092.0138617,
+      "source": "prior_history"
+    },
+    "name:truc phuong tran": {
+      "customer_name": "Truc Phuong Tran",
+      "stage": 1,
+      "last_replied_customer_msg": "em xin giá con chuột với voi",
+      "last_bot_reply_ts": 1791879548.4513013,
+      "last_interaction_ts": 1791879548.4513013,
       "source": "prior_history"
     }
   },
