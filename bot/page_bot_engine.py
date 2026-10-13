@@ -665,39 +665,73 @@ async def submit_credentials_on_page(target_page, email: str = "", password: str
             await pass_loc.fill(clean_pass)
             await asyncio.sleep(0.3)
         else:
-            # Nếu là form chia bước (bước 1 nhập email -> bấm Tiếp tục -> bước 2 nhập mật khẩu)
+            # Nếu là màn hình nhớ tài khoản ("Tiếp tục") hoặc form chia bước (bước 1 -> Tiếp tục -> bước 2 nhập mật khẩu)
             next_btn = target_page.locator(
+                'div[role="button"]:has-text("Tiếp tục"), button:has-text("Tiếp tục"), '
                 'button[type="submit"], input[type="submit"], '
-                'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
-                'button:has-text("Next"), div[role="button"]:has-text("Next")'
+                'div[role="button"]:has-text("Next"), button:has-text("Next")'
             ).first
             if await _safe_eval_count(next_btn) > 0:
                 await next_btn.click(timeout=4000, force=True)
-                await asyncio.sleep(1.0)
+                await asyncio.sleep(1.2)
                 pass_loc = target_page.locator(pass_sel).first
                 if await _safe_eval_count(pass_loc) > 0:
                     await pass_loc.fill(clean_pass)
                     await asyncio.sleep(0.3)
                     pass_count = 1
 
+            # Dự phòng: Nếu vẫn chưa thấy ô mật khẩu và có nút "Dùng trang cá nhân khác"
+            if pass_count == 0:
+                other_prof_btn = target_page.locator(
+                    'div[role="button"]:has-text("Dùng trang cá nhân khác"), '
+                    'button:has-text("Dùng trang cá nhân khác"), '
+                    'div[role="button"]:has-text("Use another profile"), '
+                    'button:has-text("Use another profile")'
+                ).first
+                if await _safe_eval_count(other_prof_btn) > 0:
+                    await other_prof_btn.click(timeout=4000, force=True)
+                    await asyncio.sleep(1.2)
+                    email_loc = target_page.locator(email_sel).first
+                    if await _safe_eval_count(email_loc) > 0 and clean_email:
+                        await email_loc.fill(clean_email)
+                        await asyncio.sleep(0.3)
+                        email_count = 1
+                    pass_loc = target_page.locator(pass_sel).first
+                    if await _safe_eval_count(pass_loc) > 0:
+                        await pass_loc.fill(clean_pass)
+                        await asyncio.sleep(0.3)
+                        pass_count = 1
+
         if pass_count == 0:
             logger.warning("Không tìm thấy ô nhập mật khẩu trên trang đăng nhập.")
             return False
 
         # 3. Gửi form đăng nhập
-        sub_sel = (
+        # QUAN TRỌNG: Tách riêng nút "Đăng nhập / Xác nhận / Submit" (ưu tiên .last để bấm đúng nút trong modal)
+        # khỏi nút "Tiếp tục" (vốn nằm ở lớp nền phía sau modal trên giao diện Facebook).
+        primary_sub_sel = (
             'button[name="login"], button[type="submit"], button#loginbutton, '
             'input[type="submit"], button[name="__CONFIRM__"], '
             '[data-testid*="royal_login_button"], [data-testid*="login"], '
             'button[data-sigil*="m_login_button"], input[data-sigil*="m_login_button"], '
+            'div[role="button"][aria-label="Đăng nhập"], '
             'button:has-text("Đăng nhập"), div[role="button"]:has-text("Đăng nhập"), '
-            'button:has-text("Log In"), button:has-text("Log in"), div[role="button"]:has-text("Log In"), '
-            'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
-            'button:has-text("Continue"), div[role="button"]:has-text("Continue")'
+            'button:has-text("Log In"), button:has-text("Log in"), '
+            'div[role="button"]:has-text("Log In"), div[role="button"]:has-text("Log in"), '
+            'button:has-text("Xác nhận"), div[role="button"]:has-text("Xác nhận"), '
+            'button:has-text("Confirm"), div[role="button"]:has-text("Confirm")'
         )
-        sub_btn = target_page.locator(sub_sel).first
-        sub_count = await _safe_eval_count(sub_btn)
-        if sub_count > 0:
+        sub_btn = target_page.locator(primary_sub_sel).first
+        primary_count = await _safe_eval_count(sub_btn)
+        if primary_count == 0:
+            fallback_sub_sel = (
+                'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
+                'button:has-text("Continue"), div[role="button"]:has-text("Continue")'
+            )
+            sub_btn = target_page.locator(fallback_sub_sel).first
+            primary_count = await _safe_eval_count(sub_btn)
+
+        if primary_count > 0:
             try:
                 await sub_btn.click(timeout=5000, force=True)
             except Exception:
@@ -786,18 +820,21 @@ async def verify_logged_in(page: Page) -> bool:
     if is_at_loginpage:
         logger.info("Phát hiện màn hình chuyển tiếp Meta Business (%s). Đang kiểm tra nút đăng nhập một chạm...", page.url[:80])
         sso_selectors = [
-            'div:has-text("Tiếp tục bằng Facebook")',
-            'button:has-text("Tiếp tục bằng Facebook")',
-            'a:has-text("Tiếp tục bằng Facebook")',
             'div[role="button"]:has-text("Tiếp tục bằng Facebook")',
-            'div:has-text("Tiếp tục dưới tên")',
-            'button:has-text("Tiếp tục dưới tên")',
-            'a:has-text("Tiếp tục dưới tên")',
+            'button:has-text("Tiếp tục bằng Facebook")',
+            'a[role="button"]:has-text("Tiếp tục bằng Facebook")',
+            'a:has-text("Tiếp tục bằng Facebook")',
             'div[role="button"]:has-text("Tiếp tục dưới tên")',
-            'div:has-text("Log in with Facebook")',
-            'button:has-text("Log in with Facebook")',
-            'a:has-text("Log in with Facebook")',
+            'button:has-text("Tiếp tục dưới tên")',
+            'a[role="button"]:has-text("Tiếp tục dưới tên")',
+            'a:has-text("Tiếp tục dưới tên")',
             'div[role="button"]:has-text("Log in with Facebook")',
+            'button:has-text("Log in with Facebook")',
+            'a[role="button"]:has-text("Log in with Facebook")',
+            'a:has-text("Log in with Facebook")',
+            'div:has-text("Tiếp tục bằng Facebook")',
+            'div:has-text("Tiếp tục dưới tên")',
+            'div:has-text("Log in with Facebook")',
         ]
 
         clicked = False
@@ -895,22 +932,34 @@ async def verify_logged_in(page: Page) -> bool:
                                     await p_input.fill(fb_password)
                                     await asyncio.sleep(0.3)
 
-                                    sub_btn = p_target.locator(
+                                    pop_login_sel = (
                                         'button[type="submit"], '
                                         'button[name="login"], '
                                         'button[name="__CONFIRM__"], '
                                         'input[type="submit"], '
-                                        'div[role="button"]:has-text("Tiếp tục"), '
-                                        'button:has-text("Tiếp tục"), '
+                                        'div[role="button"][aria-label="Đăng nhập"], '
+                                        'div[role="button"]:has-text("Đăng nhập"), '
+                                        'button:has-text("Đăng nhập"), '
+                                        'div[role="button"]:has-text("Log In"), '
+                                        'div[role="button"]:has-text("Log in"), '
+                                        'button:has-text("Log In"), '
+                                        'button:has-text("Log in"), '
                                         'div[role="button"]:has-text("Xác nhận"), '
                                         'button:has-text("Xác nhận"), '
-                                        'button:has-text("Đăng nhập"), '
-                                        'div[role="button"]:has-text("Continue"), '
-                                        'button:has-text("Continue"), '
                                         'div[role="button"]:has-text("Confirm"), '
                                         'button:has-text("Confirm")'
-                                    ).first
-                                    sub_count = await sub_btn.count() if hasattr(sub_btn, "count") else 0
+                                    )
+                                    sub_btn = p_target.locator(pop_login_sel).first
+                                    sub_count = await _safe_eval_count(sub_btn)
+                                    if sub_count == 0:
+                                        sub_btn = p_target.locator(
+                                            'div[role="button"]:has-text("Tiếp tục"), '
+                                            'button:has-text("Tiếp tục"), '
+                                            'div[role="button"]:has-text("Continue"), '
+                                            'button:has-text("Continue")'
+                                        ).first
+                                        sub_count = await _safe_eval_count(sub_btn)
+
                                     if sub_count > 0:
                                         try:
                                             await sub_btn.click(timeout=4000, force=True)
@@ -1121,6 +1170,18 @@ async def verify_logged_in(page: Page) -> bool:
             except Exception as e_nav:
                 logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
 
+            cur_p = urllib.parse.urlparse(page.url).path.lower()
+            if "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p:
+                try:
+                    from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
+                    os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
+                    await page.context.storage_state(path=str(STORAGE_STATE_FILE))
+                    export_github_secret_file(str(STORAGE_STATE_FILE))
+                    sync_storage_secret_to_github()
+                    logger.info("Đã lưu và đồng bộ storage_state sau khi SSO thành công.")
+                except Exception as e_sso_save:
+                    logger.debug("Lỗi lưu storage_state sau SSO: %s", e_sso_save)
+
         # BỔ SUNG CƠ CHẾ KÍCH HOẠT PHIÊN:
         # Nếu bị kẹt tại loginpage dù cookie Facebook đã có, điều hướng qua https://www.facebook.com/
         # rồi quay lại META_INBOX_COMMENTS_URL để cookies đồng bộ giữa hai domain.
@@ -1150,8 +1211,9 @@ async def verify_logged_in(page: Page) -> bool:
                     cur_p = urllib.parse.urlparse(page.url).path.lower()
                     if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
                         for sel in sso_selectors:
-                            loc = page.locator(sel).first
-                            if await loc.count() > 0 and await loc.is_visible():
+                            base_loc = page.locator(sel)
+                            loc = base_loc.last if sel.startswith("div:has-text(") and hasattr(base_loc, "last") else base_loc.first
+                            if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
                                 logger.info("Bấm nút SSO lần 2 sau khi đồng bộ session: %s", sel)
                                 await loc.click(timeout=5000, force=True)
                                 await human_sleep(2.0, 3.5)
@@ -1355,7 +1417,8 @@ async def verify_logged_in(page: Page) -> bool:
                                 c_p = urllib.parse.urlparse(page.url).path.lower()
                                 if "/business/loginpage" in c_p or c_p.startswith("/login"):
                                     for sel in sso_selectors:
-                                        loc = page.locator(sel).first
+                                        base_loc = page.locator(sel)
+                                        loc = base_loc.last if sel.startswith("div:has-text(") and hasattr(base_loc, "last") else base_loc.first
                                         if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
                                             logger.info("Bấm nút SSO bắc cầu phiên sau khi đã tái đăng nhập: %s", sel)
                                             await loc.click(timeout=5000, force=True)
