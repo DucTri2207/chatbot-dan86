@@ -4,8 +4,8 @@ scripts/connect_vn_vpn.py
 Tự động kết nối OpenVPN Việt Nam miễn phí qua API VPN Gate (ĐH Tsukuba, Nhật Bản).
 - Tải danh sách OpenVPN từ http://www.vpngate.net/api/iphone/
 - Lọc các server có CountryShort == 'VN'
-- Giải mã Base64 file cấu hình .ovpn và khởi chạy OpenVPN ngầm
-- Timeout an toàn: Nếu trong 20-30s không lấy được IP VN, fallback tiếp tục với IP thường (không làm sập workflow).
+- Giải mã Base64 file cấu hình .ovpn và khởi chạy OpenVPN ngầm không chặn luồng
+- Timeout an toàn: Nếu trong 20s không lấy được IP VN, fallback tiếp tục với IP thường (không làm sập workflow).
 """
 
 import base64
@@ -30,16 +30,16 @@ logging.basicConfig(
 logger = logging.getLogger("connect_vn_vpn")
 
 VPN_GATE_API_URL = "http://www.vpngate.net/api/iphone/"
-MAX_CONNECT_TIMEOUT_SEC = 25
+MAX_CONNECT_TIMEOUT_SEC = 20
 CHECK_INTERVAL_SEC = 2.0
 
 
 def get_current_ip_info() -> dict:
-    """Truy vấn thông tin IP hiện tại từ các dịch vụ IP lookup công cộng."""
+    """Truy vấn thông tin IP hiện tại từ các dịch vụ IP lookup công cộng với timeout ngắn."""
     urls = [
+        "https://api.ipify.org?format=json",
         "https://ipinfo.io/json",
         "http://ip-api.com/json",
-        "https://api.ipify.org?format=json",
     ]
     for url in urls:
         try:
@@ -47,7 +47,7 @@ def get_current_ip_info() -> dict:
                 url,
                 headers={"User-Agent": "curl/7.68.0"},
             )
-            with urllib.request.urlopen(req, timeout=5) as resp:
+            with urllib.request.urlopen(req, timeout=2.5) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="ignore"))
                 ip = data.get("ip") or data.get("query")
                 country = data.get("country") or data.get("countryCode")
@@ -73,7 +73,7 @@ def fetch_vn_vpn_servers() -> list:
             VPN_GATE_API_URL,
             headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"},
         )
-        with urllib.request.urlopen(req, timeout=12) as resp:
+        with urllib.request.urlopen(req, timeout=8) as resp:
             content = resp.read().decode("utf-8", errors="ignore")
     except Exception as e_fetch:
         logger.warning("Không thể kết nối tới API VPN Gate: %s", e_fetch)
@@ -136,17 +136,25 @@ def setup_ovpn_file(server: dict, config_path: str, auth_path: str) -> bool:
     with open(auth_path, "w", encoding="utf-8") as f_auth:
         f_auth.write("vpn\nvpn\n")
 
+    # Loại bỏ các directive auth-user-pass hoặc auth-nocache trùng lặp
+    cleaned_lines = []
+    for line in ovpn_content.splitlines():
+        st = line.strip().lower()
+        if st.startswith("auth-user-pass") or st.startswith("auth-nocache"):
+            continue
+        cleaned_lines.append(line)
+
     extra_opts = [
         "",
         "# DAN86 Auto-Config Options",
         f"auth-user-pass {auth_path}",
         "auth-nocache",
         "script-security 2",
-        "connect-retry-max 2",
-        "connect-timeout 8",
+        "connect-retry-max 1",
+        "connect-timeout 6",
         "",
     ]
-    ovpn_full = ovpn_content + "\n" + "\n".join(extra_opts)
+    ovpn_full = "\n".join(cleaned_lines) + "\n" + "\n".join(extra_opts)
 
     with open(config_path, "w", encoding="utf-8") as f_conf:
         f_conf.write(ovpn_full)
@@ -155,7 +163,7 @@ def setup_ovpn_file(server: dict, config_path: str, auth_path: str) -> bool:
 
 
 def connect_vpn(server: dict) -> bool:
-    """Khởi chạy OpenVPN ngầm và kiểm tra IP trong 25 giây."""
+    """Khởi chạy OpenVPN ngầm và kiểm tra IP trong 20 giây."""
     is_linux = platform.system().lower() == "linux"
     tmp_dir = "/tmp" if is_linux else os.environ.get("TEMP", os.getcwd())
     config_path = os.path.join(tmp_dir, "dan86_vpn_vn.ovpn")
@@ -186,7 +194,8 @@ def connect_vpn(server: dict) -> bool:
             "--config",
             config_path,
             "--daemon",
-            "dan86_vpn",
+            "--verb",
+            "1",
             "--log",
             os.path.join(tmp_dir, "dan86_vpn.log"),
         ])
@@ -195,10 +204,15 @@ def connect_vpn(server: dict) -> bool:
         cmd.extend([openvpn_bin, "--config", config_path])
 
     try:
-        if is_linux:
-            subprocess.run(cmd, check=True, timeout=10)
-        else:
-            subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        # Sử dụng Popen với stdin=DEVNULL để tuyệt đối không block tiến trình
+        proc = subprocess.Popen(
+            cmd,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+        # Chờ 1.5s để daemon khởi tạo
+        time.sleep(1.5)
     except Exception as e_launch:
         logger.warning("Không thể khởi động OpenVPN: %s", e_launch)
         return False
@@ -222,7 +236,7 @@ def connect_vpn(server: dict) -> bool:
     if is_linux:
         # Dừng daemon nếu kết nối không thành công để trả lại mạng sạch
         try:
-            subprocess.run(["sudo", "pkill", "openvpn"], check=False, timeout=5)
+            subprocess.run(["sudo", "pkill", "openvpn"], check=False, timeout=3, stdin=subprocess.DEVNULL)
         except Exception:
             pass
     return False
@@ -248,14 +262,14 @@ def main():
         logger.warning("Không có server Việt Nam nào khả dụng trên VPN Gate lúc này. Tiếp tục chạy với IP mặc định (Fallback).")
         return 0
 
-    # Thử tối đa 2 server tốt nhất
-    for idx, srv in enumerate(servers[:2], start=1):
+    # Thử server tốt nhất
+    for idx, srv in enumerate(servers[:1], start=1):
         logger.info("Thử kết nối server Việt Nam #%d (%s)...", idx, srv["ip"])
         if connect_vpn(srv):
             return 0
         logger.warning("Server #%d kết nối thất bại hoặc timeout.", idx)
 
-    logger.warning("Tất cả server VPN Việt Nam thử nghiệm đều không kết nối được. Fallback tiếp tục với IP thông thường.")
+    logger.warning("Server VPN Việt Nam không kết nối được. Fallback tiếp tục với IP thông thường.")
     final_ip_info = get_current_ip_info()
     logger.info("IP hoạt động cuối cùng: %s | Quốc gia: %s", final_ip_info["ip"], final_ip_info["country"])
     return 0
