@@ -2,9 +2,9 @@ name: DAN86 Fanpage Bot 24-7 VPS
 
 on:
   workflow_dispatch:
-  schedule:
-    # Watchdog tự động kiểm tra và giữ máy luôn chạy 24/24
-    - cron: "*/30 * * * *"
+  # schedule:
+  #   # Tam thoi tat watchdog vi nguoi dung chuyen sang chay local theo gio lam viec
+  #   - cron: "*/30 * * * *"
 
 # Đảm bảo tại mỗi thời điểm chỉ có duy nhất 1 con VPS chạy trực Page (khi gọi workflow_dispatch sẽ thay thế ca cũ ngay lập tức, không bị treo pending)
 concurrency:
