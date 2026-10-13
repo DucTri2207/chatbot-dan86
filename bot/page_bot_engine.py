@@ -613,6 +613,162 @@ async def _safe_eval_visible(loc) -> bool:
     except Exception:
         return False
 
+def generate_totp_code(secret: str, for_time: Optional[float] = None) -> str:
+    """
+    Sinh mã xác thực 2 yếu tố TOTP 6 chữ số theo chuẩn quốc tế RFC 6238.
+    Hỗ trợ cả pyotp và thuật toán RFC 6238 thuần túy tích hợp sẵn (hmac + hashlib).
+    BẢO MẬT 100%: Tuyệt đối không log chuỗi khóa bí mật hoặc mã OTP.
+    """
+    if not secret:
+        return ""
+    cleaned = secret.replace(" ", "").strip().upper()
+    if (cleaned.startswith('"') and cleaned.endswith('"')) or (
+        cleaned.startswith("'") and cleaned.endswith("'")
+    ):
+        cleaned = cleaned[1:-1].strip()
+
+    # 1. Thử dùng pyotp nếu có
+    try:
+        import pyotp
+        totp = pyotp.TOTP(cleaned)
+        code = totp.at(int(for_time)) if for_time is not None else totp.now()
+        if code and len(code) == 6 and code.isdigit():
+            return code
+    except Exception:
+        pass
+
+    # 2. Fallback sang thuật toán RFC 6238 thuần túy (hmac + hashlib)
+    try:
+        import base64
+        import hashlib
+        import hmac
+        import struct
+        missing_padding = len(cleaned) % 8
+        if missing_padding:
+            cleaned += "=" * (8 - missing_padding)
+        key = base64.b32decode(cleaned)
+        t = int(for_time if for_time is not None else time.time())
+        counter = t // 30
+        msg = struct.pack(">Q", counter)
+        digest = hmac.new(key, msg, hashlib.sha1).digest()
+        offset = digest[19] & 0x0F
+        code_int = (struct.unpack(">I", digest[offset : offset + 4])[0] & 0x7FFFFFFF) % 1000000
+        return f"{code_int:06d}"
+    except Exception as e_totp:
+        logger.warning("Không thể tính toán mã TOTP từ chuỗi khóa bí mật: %s", type(e_totp).__name__)
+        return ""
+
+
+async def handle_facebook_2fa_checkpoint(target_page_or_popup: Any, fb_2fa_secret: str) -> bool:
+    """
+    Tự động xử lý màn hình xác thực 2 yếu tố (2FA / Checkpoint) của Facebook
+    sử dụng Khóa an toàn FB_2FA_SECRET (chuẩn TOTP RFC 6238).
+    BẢO MẬT 100%: Tuyệt đối không log khóa bí mật hoặc mã OTP ra ngoài.
+    """
+    if not fb_2fa_secret:
+        return False
+    try:
+        totp_code = generate_totp_code(fb_2fa_secret)
+        if not totp_code or len(totp_code) != 6:
+            logger.warning("Không thể sinh mã OTP 6 chữ số từ FB_2FA_SECRET. Vui lòng kiểm tra định dạng khóa.")
+            return False
+
+        # 1. Tìm ô nhập mã 2FA
+        code_input_sel = (
+            'input[name="approvals_code"], '
+            'input#approvals_code, '
+            'input[autocomplete="one-time-code"], '
+            'input[type="text"][maxlength="6"], '
+            'input[type="number"][maxlength="6"], '
+            'input[type="tel"][maxlength="6"], '
+            'input[placeholder*="mã"], '
+            'input[placeholder*="code"], '
+            'input[aria-label*="mã"], '
+            'input[aria-label*="code"]'
+        )
+        input_loc = target_page_or_popup.locator(code_input_sel).first
+        if await _safe_eval_count(input_loc) == 0:
+            logger.warning("Không tìm thấy ô nhập mã 2FA trên trang checkpoint/xác thực.")
+            return False
+
+        logger.info("Đang tự động nhập mã xác thực 2FA 6 chữ số vào Facebook từ Khóa an toàn FB_2FA_SECRET...")
+        try:
+            await input_loc.click(timeout=3000, force=True)
+            await input_loc.fill("")
+            keyboard = getattr(target_page_or_popup, "keyboard", None)
+            if keyboard and hasattr(keyboard, "type"):
+                for ch in totp_code:
+                    await keyboard.type(ch, delay=60)
+            else:
+                await input_loc.fill(totp_code)
+            await asyncio.sleep(0.5)
+        except Exception as e_fill:
+            logger.warning("Lỗi khi điền mã 2FA: %s", e_fill)
+            try:
+                await input_loc.fill(totp_code)
+            except Exception:
+                pass
+
+        # 2. Bấm nút Tiếp tục / Submit
+        sub_btn_sel = (
+            'button#checkpointSubmitButton, '
+            'button[type="submit"], '
+            'button[name="__CONFIRM__"], '
+            'button:has-text("Tiếp tục"), '
+            'div[role="button"]:has-text("Tiếp tục"), '
+            'button:has-text("Continue"), '
+            'div[role="button"]:has-text("Continue"), '
+            'button:has-text("Xác nhận"), '
+            'div[role="button"]:has-text("Xác nhận")'
+        )
+        sub_loc = target_page_or_popup.locator(sub_btn_sel).first
+        if await _safe_eval_count(sub_loc) > 0:
+            try:
+                await sub_loc.click(timeout=4000, force=True)
+            except Exception:
+                await input_loc.press("Enter")
+        else:
+            await input_loc.press("Enter")
+
+        # 3. Chờ chuyển tiếp và xử lý các màn hình kế tiếp (Lưu trình duyệt / Nhớ thiết bị, Đây là tôi)
+        for _ in range(8):
+            await asyncio.sleep(1.5)
+            if getattr(target_page_or_popup, "is_closed", lambda: False)():
+                logger.info("Màn hình xác thực 2FA đã tự đóng thành công.")
+                return True
+
+            cur_url = getattr(target_page_or_popup, "url", "").lower()
+            if "checkpoint" not in cur_url and "two_step_verification" not in cur_url:
+                logger.info("Xác thực 2FA thành công! Đã thoát khỏi checkpoint (URL: %s).", cur_url[:60])
+                return True
+
+            # Kiểm tra xem có tùy chọn 'Lưu trình duyệt' (Save browser)
+            try:
+                save_radio = target_page_or_popup.locator('input[value="save_device"]').first
+                if await _safe_eval_count(save_radio) > 0:
+                    logger.info("Tự động chọn 'Lưu trình duyệt / Nhớ thiết bị này' để không bao giờ hỏi lại...")
+                    await save_radio.check(timeout=2000, force=True)
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+            # Bấm tiếp nút xác nhận nếu có
+            step_btn = target_page_or_popup.locator(sub_btn_sel).first
+            if await _safe_eval_count(step_btn) > 0 and await _safe_eval_visible(step_btn):
+                try:
+                    await step_btn.click(timeout=3000, force=True)
+                except Exception:
+                    pass
+
+        cur_url = getattr(target_page_or_popup, "url", "").lower()
+        if "checkpoint" not in cur_url and "two_step_verification" not in cur_url:
+            logger.info("Xác thực 2FA hoàn tất thành công!")
+            return True
+        return False
+    except Exception as e_2fa:
+        logger.warning("Lỗi trong quá trình tự động xử lý 2FA: %s", e_2fa)
+        return False
+
 
 async def submit_credentials_on_page(target_page, email: str = "", password: str = "") -> bool:
     """
@@ -934,6 +1090,18 @@ async def attempt_sso_bridge_on_page(page: Page, sso_selectors: Optional[list] =
                         "checkpoint" in pop_url
                         or await p_target.locator('input[name="approvals_code"]').count() > 0
                     )
+                    if has_checkpoint:
+                        fb_2fa_secret = os.environ.get("FB_2FA_SECRET", "").strip().strip('"').strip("'")
+                        if fb_2fa_secret:
+                            logger.info("Popup SSO chuyển sang màn hình 2FA/Checkpoint. Đang tự động xử lý bằng Khóa bí mật FB_2FA_SECRET...")
+                            two_fa_ok = await handle_facebook_2fa_checkpoint(p_target, fb_2fa_secret)
+                            if two_fa_ok:
+                                logger.info("Popup SSO đã vượt qua 2FA thành công.")
+                                try:
+                                    await p_target.close()
+                                except Exception:
+                                    pass
+                                return True
                     if rem_pass_after > 0 or has_checkpoint:
                         logger.warning(
                             "Popup SSO xác nhận mật khẩu không thành công (mật khẩu không đúng hoặc gặp checkpoint/2FA). Đóng popup."
@@ -1056,8 +1224,16 @@ async def attempt_sso_bridge_on_page(page: Page, sso_selectors: Optional[list] =
                                                 or await popup.locator('input[name="approvals_code"]').count() > 0
                                             )
                                             if has_checkpoint:
-                                                logger.warning("Popup SSO chuyển sang trang checkpoint/2FA. Đóng popup.")
-                                                sso_success = False
+                                                fb_2fa_secret = os.environ.get("FB_2FA_SECRET", "").strip().strip('"').strip("'")
+                                                if fb_2fa_secret:
+                                                    logger.info("Popup SSO gặp màn hình checkpoint/2FA. Đang tự động xử lý bằng Khóa bí mật FB_2FA_SECRET...")
+                                                    two_fa_ok = await handle_facebook_2fa_checkpoint(popup, fb_2fa_secret)
+                                                    if two_fa_ok:
+                                                        logger.info("Popup SSO vượt qua 2FA thành công!")
+                                                        sso_success = True
+                                                if not sso_success:
+                                                    logger.warning("Popup SSO chuyển sang trang checkpoint/2FA. Đóng popup.")
+                                                    sso_success = False
                                             else:
                                                 sso_success = True
                                             try:
@@ -1397,6 +1573,14 @@ async def verify_logged_in(page: Page) -> bool:
                                         except Exception:
                                             has_2fa = False
                                         if has_2fa:
+                                            fb_2fa_secret = os.environ.get("FB_2FA_SECRET", "").strip().strip('"').strip("'")
+                                            if fb_2fa_secret:
+                                                logger.info("Đăng nhập Facebook gặp màn hình xác thực 2FA. Đang tự động xử lý bằng Khóa bí mật FB_2FA_SECRET...")
+                                                two_fa_ok = await handle_facebook_2fa_checkpoint(page, fb_2fa_secret)
+                                                if two_fa_ok:
+                                                    logger.info("Đã vượt qua 2FA trên trang chính thành công!")
+                                                    fb_auth_done = True
+                                                    break
                                             logger.warning("Đăng nhập Facebook gặp checkpoint/2FA xác thực tài khoản. Không thể tự động vượt qua.")
                                             return False
                                         cp_btn = page.locator(
@@ -1410,6 +1594,12 @@ async def verify_logged_in(page: Page) -> bool:
                                                 continue
                                             except Exception:
                                                 pass
+                                        fb_2fa_secret = os.environ.get("FB_2FA_SECRET", "").strip().strip('"').strip("'")
+                                        if fb_2fa_secret:
+                                            two_fa_ok = await handle_facebook_2fa_checkpoint(page, fb_2fa_secret)
+                                            if two_fa_ok:
+                                                fb_auth_done = True
+                                                break
                                         logger.warning("Đăng nhập Facebook gặp checkpoint/2FA xác thực tài khoản. Không thể tự động vượt qua.")
                                         return False
 
@@ -1492,7 +1682,14 @@ async def verify_logged_in(page: Page) -> bool:
     path = parsed.path.lower()
 
     if "checkpoint" in path:
-        return False
+        fb_2fa_secret = os.environ.get("FB_2FA_SECRET", "").strip().strip('"').strip("'")
+        if fb_2fa_secret:
+            logger.info("Phát hiện đường dẫn checkpoint trong verify_logged_in. Đang xử lý 2FA...")
+            two_fa_ok = await handle_facebook_2fa_checkpoint(page, fb_2fa_secret)
+            if not two_fa_ok:
+                return False
+        else:
+            return False
     if "/business/loginpage" in path or path.startswith("/login"):
         return False
 
