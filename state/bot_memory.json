@@ -390,6 +390,17 @@
       "post_id": "1166938839191480",
       "dom_index": 1,
       "inbox_attempts": 2
+    },
+    "cmt:1158880666663964:1:4ad0ec89e4faf9b0": {
+      "author": "Đức Trí",
+      "comment_text": ".",
+      "public_reply": "Dạ chào Đức Trí, DAN86 đã gửi tin nhắn riêng cho bạn rồi ạ. Bạn kiểm tra Messenger hoặc tin nhắn chờ để bên em tư vấn set quà phù hợp nhất cho mình nhé! 🌿",
+      "private_inbox_sent": true,
+      "private_reply_text": "Chào Đức Trí, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
+      "replied_at": 1791876551.508913,
+      "post_id": "1158880666663964",
+      "dom_index": 1,
+      "inbox_attempts": 1
     }
   },
   "conversations": {
@@ -511,15 +522,15 @@
       "stage": 1,
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
-      "last_bot_reply_ts": 1791866184.4024606,
-      "last_interaction_ts": 1791875859.9911928
+      "last_bot_reply_ts": 1791876551.508913,
+      "last_interaction_ts": 1791876645.1366093
     },
     "tid:100009356156734": {
       "customer_name": "Uyên Phạm",
       "stage": 1,
       "last_replied_customer_msg": "dạ cảm ơn shop nha",
       "last_bot_reply_ts": 1791813635.9592998,
-      "last_interaction_ts": 1791876461.0063128,
+      "last_interaction_ts": 1791876650.1961062,
       "source": "prior_history"
     },
     "name:vân kim": {
@@ -547,8 +558,8 @@
     }
   },
   "stats": {
-    "comments_replied": 44,
-    "private_inboxes_from_comment": 25,
+    "comments_replied": 45,
+    "private_inboxes_from_comment": 26,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
