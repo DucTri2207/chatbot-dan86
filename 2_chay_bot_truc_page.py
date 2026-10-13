@@ -177,20 +177,31 @@ async def run_bot_loop(
             headless=headless,
             use_persistent_profile=False,
         )
-        page = context.pages[0] if context.pages else await context.new_page()
+        # Giữ một trang neo nhẹ nhàng (about:blank) để context luôn duy trì ổn định
+        anchor_page = context.pages[0] if context.pages else await context.new_page()
+        try:
+            await anchor_page.goto("about:blank")
+        except Exception:
+            pass
 
         # Bước 0: Làm ấm phiên đăng nhập Facebook và xác thực SSO trước khi bắt đầu quét
         logger.info("Đang kiểm tra và làm ấm phiên đăng nhập Facebook...")
+        init_page = await context.new_page()
         try:
-            await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
+            await init_page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
             await asyncio.sleep(2.0)
             logger.info("Đã kết nối máy chủ Facebook. Đang mở Meta Business Suite...")
-            await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+            await init_page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
             await asyncio.sleep(3.0)
-            logged_in_ok = await verify_logged_in(page)
-            logger.info("Kết quả xác thực khởi động Meta Business Suite: %s (URL: %s)", logged_in_ok, page.url)
+            logged_in_ok = await verify_logged_in(init_page)
+            logger.info("Kết quả xác thực khởi động Meta Business Suite: %s (URL: %s)", logged_in_ok, init_page.url)
         except Exception as e_init:
             logger.warning("Cảnh báo khi làm ấm phiên khởi động: %s", e_init)
+        finally:
+            try:
+                await init_page.close()
+            except Exception:
+                pass
 
         cycle = 0
         try:
@@ -201,33 +212,45 @@ async def run_bot_loop(
                 cmt_replied = 0
                 inbox_replied = 0
 
+                # Mở tab mới tinh cho chu kỳ quét để cách ly bộ nhớ
+                scan_page = await context.new_page()
                 try:
                     # 1. Quét Trang Thông Báo Facebook (Toàn bộ bài viết, không giới hạn Top 10)
                     notif_replied = await process_facebook_notifications_tab(
-                        page=page,
+                        page=scan_page,
                         memory=memory,
                         dry_run=dry_run,
                     )
 
                     # 2. Quét Tab Bình luận Facebook (Fallback dự phòng Hộp thư)
                     cmt_replied = await process_facebook_comments_tab(
-                        page=page,
+                        page=scan_page,
                         memory=memory,
                         dry_run=dry_run,
                     )
 
                     # 3. Quét Tab Messenger Inbox (Lần 1 chào random / Lần 2 báo đợi nhân viên random)
                     inbox_replied = await process_messenger_inbox_tab(
-                        page=page,
+                        page=scan_page,
                         memory=memory,
                         dry_run=dry_run,
                     )
                 except Exception as e_cycle:
                     logger.error("Lỗi trong chu kỳ quét #%d: %s. Đang tự động hồi phục...", cycle, e_cycle)
+                finally:
+                    # ĐÓNG HOÀN TOÀN TAB VỪA QUÉT ĐỂ GIẢI PHÓNG 100% RAM CHO MÁY TÍNH
                     try:
-                        await page.goto("https://www.facebook.com", wait_until="domcontentloaded", timeout=30000)
+                        await scan_page.close()
                     except Exception:
                         pass
+                    # Dọn dẹp triệt để bất kỳ tab hoặc popup phụ nào phát sinh ngoài ý muốn
+                    if hasattr(context, "pages"):
+                        for p in list(context.pages):
+                            if p != anchor_page and not getattr(p, "is_closed", lambda: False)():
+                                try:
+                                    await p.close()
+                                except Exception:
+                                    pass
 
                 total_replied = notif_replied + cmt_replied
                 logger.info(
