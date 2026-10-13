@@ -488,6 +488,14 @@
       "last_bot_reply_ts": 1791813635.9592998,
       "last_interaction_ts": 1791813635.9592998,
       "source": "prior_history"
+    },
+    "name:vân kim": {
+      "customer_name": "Vân Kim",
+      "stage": 1,
+      "last_replied_customer_msg": "bên mình bán sản phẩm này đúng không",
+      "last_bot_reply_ts": 1791853871.3794842,
+      "last_interaction_ts": 1791853871.3794842,
+      "source": "prior_history"
     }
   },
   "stats": {
