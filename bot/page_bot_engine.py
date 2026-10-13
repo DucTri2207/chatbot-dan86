@@ -732,6 +732,7 @@ async def submit_credentials_on_page(target_page, email: str = "", password: str
             primary_count = await _safe_eval_count(sub_btn)
 
         if primary_count > 0:
+            await asyncio.sleep(0.4)
             try:
                 await sub_btn.click(timeout=5000, force=True)
             except Exception:
@@ -1170,17 +1171,6 @@ async def verify_logged_in(page: Page) -> bool:
             except Exception as e_nav:
                 logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
 
-            cur_p = urllib.parse.urlparse(page.url).path.lower()
-            if "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p:
-                try:
-                    from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
-                    os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
-                    await page.context.storage_state(path=str(STORAGE_STATE_FILE))
-                    export_github_secret_file(str(STORAGE_STATE_FILE))
-                    sync_storage_secret_to_github()
-                    logger.info("Đã lưu và đồng bộ storage_state sau khi SSO thành công.")
-                except Exception as e_sso_save:
-                    logger.debug("Lỗi lưu storage_state sau SSO: %s", e_sso_save)
 
         # BỔ SUNG CƠ CHẾ KÍCH HOẠT PHIÊN:
         # Nếu bị kẹt tại loginpage dù cookie Facebook đã có, điều hướng qua https://www.facebook.com/
@@ -1288,7 +1278,28 @@ async def verify_logged_in(page: Page) -> bool:
                     c_p = urllib.parse.urlparse(page.url).path.lower()
                     if "/business/loginpage" in c_p or c_p.startswith("/login"):
                         try:
-                            logger.info("Điều hướng sang trang đăng nhập chuẩn https://www.facebook.com/login.php...")
+                            logger.info("Kích hoạt cơ chế Incognito Clean Slate: Xóa sạch toàn bộ cookie và storage rác...")
+                            # 1. Xóa toàn bộ cookies rác trong context
+                            try:
+                                clear_cookies_fn = getattr(page.context, "clear_cookies", None)
+                                if callable(clear_cookies_fn):
+                                    cc_res = clear_cookies_fn()
+                                    if asyncio.iscoroutine(cc_res) or hasattr(cc_res, "__await__"):
+                                        await cc_res
+                            except Exception as e_cc:
+                                logger.debug("Lỗi xóa cookies Clean Slate: %s", e_cc)
+
+                            # 2. Xóa sạch localStorage và sessionStorage
+                            try:
+                                eval_fn = getattr(page, "evaluate", None)
+                                if callable(eval_fn):
+                                    ev_res = eval_fn("() => { try { localStorage.clear(); sessionStorage.clear(); } catch(e){} }")
+                                    if asyncio.iscoroutine(ev_res) or hasattr(ev_res, "__await__"):
+                                        await ev_res
+                            except Exception as e_ev:
+                                logger.debug("Lỗi xóa storage Clean Slate: %s", e_ev)
+
+                            logger.info("Mở trang đăng nhập chuẩn https://www.facebook.com/login.php không mang rác cookie cũ...")
                             if hasattr(page, "goto"):
                                 goto_res = page.goto("https://www.facebook.com/login.php", wait_until="domcontentloaded", timeout=30000)
                                 if asyncio.iscoroutine(goto_res) or hasattr(goto_res, "__await__"):

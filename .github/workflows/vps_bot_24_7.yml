@@ -47,6 +47,13 @@ jobs:
           restore-keys: |
             fb-session-${{ runner.os }}-
 
+      - name: 3c. Tự động kết nối OpenVPN Việt Nam (Tối ưu hạ tầng mạng & Tránh chặn IP quốc tế)
+        continue-on-error: true
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq openvpn curl || true
+          python scripts/connect_vn_vpn.py || true
+          curl -s https://ipinfo.io/json || true
+
       - name: 4. Chạy Bot Trực Fanpage DAN86 (Ca làm việc 5 tiếng 20 phút)
         env:
           FB_STORAGE_STATE: ${{ secrets.FB_STORAGE_STATE }}
