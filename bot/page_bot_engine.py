@@ -588,6 +588,141 @@ def is_page_author_name(text: str) -> bool:
     return any(p in norm for p in PAGE_NAMES)
 
 
+async def _safe_eval_count(loc) -> int:
+    if loc is None or not hasattr(loc, "count"):
+        return 0
+    try:
+        cnt_val = loc.count()
+        if asyncio.iscoroutine(cnt_val) or hasattr(cnt_val, "__await__"):
+            cnt_val = await cnt_val
+        if isinstance(cnt_val, (int, float)):
+            return int(cnt_val)
+        return 0
+    except Exception:
+        return 0
+
+
+async def _safe_eval_visible(loc) -> bool:
+    if loc is None or not hasattr(loc, "is_visible"):
+        return False
+    try:
+        vis_val = loc.is_visible()
+        if asyncio.iscoroutine(vis_val) or hasattr(vis_val, "__await__"):
+            vis_val = await vis_val
+        return bool(vis_val)
+    except Exception:
+        return False
+
+
+async def submit_credentials_on_page(target_page, email: str = "", password: str = "") -> bool:
+    """
+    Điền tài khoản FB_EMAIL và mật khẩu FB_PASSWORD vào form đăng nhập và gửi an toàn.
+    BẢO MẬT 100%: Tuyệt đối không log tài khoản email hoặc mật khẩu ra màn hình hay exception logs.
+    """
+    clean_email = (email or "").strip()
+    if (clean_email.startswith('"') and clean_email.endswith('"')) or (
+        clean_email.startswith("'") and clean_email.endswith("'")
+    ):
+        clean_email = clean_email[1:-1].strip()
+
+    clean_pass = (password or "").strip()
+    if (clean_pass.startswith('"') and clean_pass.endswith('"')) or (
+        clean_pass.startswith("'") and clean_pass.endswith("'")
+    ):
+        clean_pass = clean_pass[1:-1].strip()
+
+    if not clean_pass:
+        logger.warning("Không thể điền form đăng nhập do biến môi trường FB_PASSWORD chưa được cấu hình.")
+        return False
+
+    try:
+        # 1. Tìm và điền ô nhập email/tài khoản (nếu có)
+        email_sel = (
+            'input[name="email"], input[type="email"], input#email, '
+            'input#m_login_email, input[name="m_login_email"], input[data-sigil*="m_login_email"], '
+            'input[name="login"], input[autocomplete="username"], '
+            'input[aria-label*="email" i], input[placeholder*="email" i], '
+            'input[placeholder*="số di động" i], input[placeholder*="phone" i], '
+            'input[aria-label*="phone" i]'
+        )
+        email_loc = target_page.locator(email_sel).first
+        email_count = await _safe_eval_count(email_loc)
+        if email_count > 0 and clean_email:
+            await email_loc.fill(clean_email)
+            await asyncio.sleep(0.3)
+
+        # 2. Tìm và điền ô nhập mật khẩu
+        pass_sel = (
+            'input[name="pass"], input[type="password"], input#pass, '
+            'input#m_login_password, input[name="m_login_password"], input[data-sigil*="m_login_password"], '
+            'input[autocomplete="current-password"], '
+            'input[aria-label*="mật khẩu" i], input[placeholder*="mật khẩu" i], '
+            'input[aria-label*="password" i], input[placeholder*="password" i]'
+        )
+        pass_loc = target_page.locator(pass_sel).first
+        pass_count = await _safe_eval_count(pass_loc)
+        if pass_count > 0:
+            await pass_loc.fill(clean_pass)
+            await asyncio.sleep(0.3)
+        else:
+            # Nếu là form chia bước (bước 1 nhập email -> bấm Tiếp tục -> bước 2 nhập mật khẩu)
+            next_btn = target_page.locator(
+                'button[type="submit"], input[type="submit"], '
+                'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
+                'button:has-text("Next"), div[role="button"]:has-text("Next")'
+            ).first
+            if await _safe_eval_count(next_btn) > 0:
+                await next_btn.click(timeout=4000, force=True)
+                await asyncio.sleep(1.0)
+                pass_loc = target_page.locator(pass_sel).first
+                if await _safe_eval_count(pass_loc) > 0:
+                    await pass_loc.fill(clean_pass)
+                    await asyncio.sleep(0.3)
+                    pass_count = 1
+
+        if pass_count == 0:
+            logger.warning("Không tìm thấy ô nhập mật khẩu trên trang đăng nhập.")
+            return False
+
+        # 3. Gửi form đăng nhập
+        sub_sel = (
+            'button[name="login"], button[type="submit"], button#loginbutton, '
+            'input[type="submit"], button[name="__CONFIRM__"], '
+            '[data-testid*="royal_login_button"], [data-testid*="login"], '
+            'button[data-sigil*="m_login_button"], input[data-sigil*="m_login_button"], '
+            'button:has-text("Đăng nhập"), div[role="button"]:has-text("Đăng nhập"), '
+            'button:has-text("Log In"), button:has-text("Log in"), div[role="button"]:has-text("Log In"), '
+            'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
+            'button:has-text("Continue"), div[role="button"]:has-text("Continue")'
+        )
+        sub_btn = target_page.locator(sub_sel).first
+        sub_count = await _safe_eval_count(sub_btn)
+        if sub_count > 0:
+            try:
+                await sub_btn.click(timeout=5000, force=True)
+            except Exception:
+                if pass_count > 0 and hasattr(pass_loc, "press"):
+                    await pass_loc.press("Enter")
+                elif email_count > 0 and hasattr(email_loc, "press"):
+                    await email_loc.press("Enter")
+        elif pass_count > 0 and hasattr(pass_loc, "press"):
+            await pass_loc.press("Enter")
+        elif email_count > 0 and hasattr(email_loc, "press"):
+            await email_loc.press("Enter")
+
+        return True
+    except Exception as e_fill:
+        err_msg = str(e_fill)
+        for p in (clean_pass, password):
+            if p and p in err_msg:
+                err_msg = err_msg.replace(p, "[REDACTED_PASSWORD]")
+        for e in (clean_email, email):
+            if e and e in err_msg:
+                err_msg = err_msg.replace(e, "[REDACTED_EMAIL]")
+        logger.warning("Lỗi điền thông tin form đăng nhập: %s", err_msg)
+        return False
+
+
 async def verify_logged_in(page: Page) -> bool:
     """
     Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa.
@@ -669,7 +804,7 @@ async def verify_logged_in(page: Page) -> bool:
         sso_success = False
         for sel in sso_selectors:
             loc = page.locator(sel).first
-            if await loc.count() > 0 and await loc.is_visible():
+            if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
                 logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
                 popup_future = asyncio.get_event_loop().create_future()
                 def on_sso_page(new_p):
@@ -691,6 +826,11 @@ async def verify_logged_in(page: Page) -> bool:
                             c_p = urllib.parse.urlparse(page.url).path.lower()
                             if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
                                 return True
+                            try:
+                                if await page.locator('input[name="pass"], input[type="password"]').count() > 0:
+                                    return "inline_form"
+                            except Exception:
+                                pass
 
                     popup_task = asyncio.create_task(wait_popup())
                     redirect_task = asyncio.create_task(watch_main_page_nav())
@@ -722,6 +862,12 @@ async def verify_logged_in(page: Page) -> bool:
                                 ):
                                     fb_password = fb_password[1:-1].strip()
 
+                                fb_email = os.environ.get("FB_EMAIL", "").strip()
+                                if (fb_email.startswith('"') and fb_email.endswith('"')) or (
+                                    fb_email.startswith("'") and fb_email.endswith("'")
+                                ):
+                                    fb_email = fb_email[1:-1].strip()
+
                                 if not fb_password:
                                     logger.warning(
                                         "Popup SSO yêu cầu nhập mật khẩu thủ công nhưng biến môi trường FB_PASSWORD chưa được cấu hình. "
@@ -735,6 +881,16 @@ async def verify_logged_in(page: Page) -> bool:
 
                                 logger.info("Popup SSO yêu cầu xác nhận mật khẩu. Đang tự động nạp mật khẩu an toàn từ biến môi trường...")
                                 try:
+                                    # Nếu popup có ô email (inline login trong popup)
+                                    if fb_email:
+                                        try:
+                                            em_loc = p_target.locator('input[name="email"], input[type="email"], input#email').first
+                                            if await em_loc.count() > 0:
+                                                await em_loc.fill(fb_email)
+                                                await asyncio.sleep(0.3)
+                                        except Exception:
+                                            pass
+
                                     p_input = p_target.locator('input[name="pass"], input[type="password"]').first
                                     await p_input.fill(fb_password)
                                     await asyncio.sleep(0.3)
@@ -810,6 +966,8 @@ async def verify_logged_in(page: Page) -> bool:
                                     err_msg = str(e_pw)
                                     if fb_password and fb_password in err_msg:
                                         err_msg = err_msg.replace(fb_password, "[REDACTED_PASSWORD]")
+                                    if fb_email and fb_email in err_msg:
+                                        err_msg = err_msg.replace(fb_email, "[REDACTED_EMAIL]")
                                     logger.warning("Lỗi trong quá trình tự động xác thực mật khẩu SSO: %s", err_msg)
                                     try:
                                         await p_target.close()
@@ -817,11 +975,12 @@ async def verify_logged_in(page: Page) -> bool:
                                         pass
                                     return False
 
-                            # 1. Kiểm tra nếu popup hiển thị ô nhập mật khẩu ngay khi mở
+                            # 1. Kiểm tra nếu popup hiển thị ô nhập mật khẩu hoặc email ngay khi mở
                             is_cl = getattr(popup, "is_closed", lambda: False)()
                             if not is_cl:
                                 pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
-                                if pass_count > 0:
+                                email_count = await popup.locator('input[name="email"], input[type="email"], input#email').count()
+                                if pass_count > 0 or email_count > 0:
                                     sso_success = await handle_sso_password(popup)
                                 else:
                                     # Bấm nút 'Tiếp tục' hoặc profile người dùng trong popup
@@ -861,7 +1020,10 @@ async def verify_logged_in(page: Page) -> bool:
                                         for _ in range(20):  # Tối đa 10s (mỗi 0.5s)
                                             if getattr(popup, "is_closed", lambda: False)():
                                                 break
-                                            if await popup.locator('input[name="pass"], input[type="password"]').count() > 0:
+                                            if (
+                                                await popup.locator('input[name="pass"], input[type="password"]').count() > 0
+                                                or await popup.locator('input[name="email"], input[type="email"], input#email').count() > 0
+                                            ):
                                                 has_pass_prompt = True
                                                 break
                                             await asyncio.sleep(0.5)
@@ -890,12 +1052,42 @@ async def verify_logged_in(page: Page) -> bool:
                             logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
 
                     elif redirect_task in done and not redirect_task.cancelled() and redirect_task.exception() is None:
-                        if redirect_task.result():
+                        res_nav = redirect_task.result()
+                        if res_nav is True:
                             logger.info("Trang chính đã tự chuyển hướng thành công mà không cần popup: %s", page.url[:80])
                             sso_success = True
+                        elif res_nav == "inline_form":
+                            logger.info("Nút SSO mở ra form đăng nhập inline trên trang. Đang tự động nạp thông tin đăng nhập...")
+                            fb_email = os.environ.get("FB_EMAIL", "").strip()
+                            if (fb_email.startswith('"') and fb_email.endswith('"')) or (
+                                fb_email.startswith("'") and fb_email.endswith("'")
+                            ):
+                                fb_email = fb_email[1:-1].strip()
+
+                            fb_password = os.environ.get("FB_PASSWORD", "").strip()
+                            if (fb_password.startswith('"') and fb_password.endswith('"')) or (
+                                fb_password.startswith("'") and fb_password.endswith("'")
+                            ):
+                                fb_password = fb_password[1:-1].strip()
+
+                            if fb_password:
+                                inline_ok = await submit_credentials_on_page(page, fb_email, fb_password)
+                                if inline_ok:
+                                    for _ in range(8):
+                                        await asyncio.sleep(0.5)
+                                        c_p = urllib.parse.urlparse(page.url).path.lower()
+                                        if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
+                                            sso_success = True
+                                            break
 
                 except Exception as e_click:
-                    logger.debug("Lỗi bấm nút SSO: %s", e_click)
+                    err_msg = str(e_click)
+                    pw = os.environ.get("FB_PASSWORD", "").strip().strip('"').strip("'")
+                    em = os.environ.get("FB_EMAIL", "").strip().strip('"').strip("'")
+                    for s in (pw, em):
+                        if s and s in err_msg:
+                            err_msg = err_msg.replace(s, "[REDACTED]")
+                    logger.debug("Lỗi bấm nút SSO: %s", err_msg)
                 finally:
                     try:
                         page.context.remove_listener("page", on_sso_page)
@@ -915,8 +1107,15 @@ async def verify_logged_in(page: Page) -> bool:
                     cur_p = urllib.parse.urlparse(page.url).path.lower()
                     if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
                         break
-                cur_p = urllib.parse.urlparse(page.url).path.lower()
-                if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+                cur_parsed = urllib.parse.urlparse(page.url)
+                cur_p = cur_parsed.path.lower()
+                cur_host = cur_parsed.netloc.lower()
+                if (
+                    "/business/loginpage" in cur_p
+                    or cur_p.startswith("/login")
+                    or "business.facebook.com" not in cur_host
+                    or not cur_p.startswith("/latest/")
+                ):
                     await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
                 await human_sleep(1.0, 2.0)
             except Exception as e_nav:
@@ -959,6 +1158,219 @@ async def verify_logged_in(page: Page) -> bool:
                                 break
             except Exception as e_auth_check:
                 logger.debug("Lỗi kiểm tra auth cookies: %s", e_auth_check)
+
+        cur_p = urllib.parse.urlparse(page.url).path.lower()
+        if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
+            # R1 & R2: TỰ ĐỘNG TÁI XÁC THỰC (AUTO RE-AUTHENTICATION)
+            # Khi phiên Facebook thực sự đã hết hạn hoặc nút bắc cầu một chạm bị timeout
+            fb_email = os.environ.get("FB_EMAIL", "").strip()
+            if (fb_email.startswith('"') and fb_email.endswith('"')) or (
+                fb_email.startswith("'") and fb_email.endswith("'")
+            ):
+                fb_email = fb_email[1:-1].strip()
+
+            fb_password = os.environ.get("FB_PASSWORD", "").strip()
+            if (fb_password.startswith('"') and fb_password.endswith('"')) or (
+                fb_password.startswith("'") and fb_password.endswith("'")
+            ):
+                fb_password = fb_password[1:-1].strip()
+
+            if fb_email and fb_password:
+                logger.info(
+                    "Phiên làm việc Facebook đã hết hạn. Đang kích hoạt cơ chế Auto Re-Authentication an toàn từ biến môi trường..."
+                )
+                reauth_success = False
+
+                # 1. Kiểm tra nếu ngay trên loginpage có form đăng nhập inline
+                try:
+                    has_inline_login = await page.locator('input[name="pass"], input[type="password"]').count() > 0
+                    if has_inline_login:
+                        logger.info("Phát hiện form đăng nhập inline trên loginpage. Đang gửi thông tin đăng nhập an toàn...")
+                        inline_ok = await submit_credentials_on_page(page, fb_email, fb_password)
+                        if inline_ok:
+                            for _ in range(20):
+                                await asyncio.sleep(0.5)
+                                c_p = urllib.parse.urlparse(page.url).path.lower()
+                                if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
+                                    reauth_success = True
+                                    break
+                                try:
+                                    c_list = await page.context.cookies()
+                                    if any(c.get("name") == "c_user" and c.get("value") for c in c_list if isinstance(c, dict)):
+                                        reauth_success = True
+                                        break
+                                except Exception:
+                                    pass
+
+                            if reauth_success:
+                                logger.info("Đăng nhập inline thành công! Đang lưu session mới và chuyển hướng tới Meta Business Suite...")
+                                try:
+                                    from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
+                                    os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
+                                    await page.context.storage_state(path=str(STORAGE_STATE_FILE))
+                                    export_github_secret_file(str(STORAGE_STATE_FILE))
+                                    sync_storage_secret_to_github()
+                                except Exception as e_mid_save:
+                                    logger.debug("Lỗi lưu storage_state sau inline login: %s", e_mid_save)
+
+                                if hasattr(page, "goto"):
+                                    goto_res = page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+                                    if asyncio.iscoroutine(goto_res) or hasattr(goto_res, "__await__"):
+                                        await goto_res
+                                await human_sleep(2.0, 3.5)
+                except Exception as e_inline:
+                    logger.debug("Lỗi xử lý form inline: %s", e_inline)
+
+                # 2. Nếu chưa thành công, điều hướng trực tiếp sang https://www.facebook.com/login.php
+                if not reauth_success:
+                    c_p = urllib.parse.urlparse(page.url).path.lower()
+                    if "/business/loginpage" in c_p or c_p.startswith("/login"):
+                        try:
+                            logger.info("Điều hướng sang trang đăng nhập chuẩn https://www.facebook.com/login.php...")
+                            if hasattr(page, "goto"):
+                                goto_res = page.goto("https://www.facebook.com/login.php", wait_until="domcontentloaded", timeout=30000)
+                                if asyncio.iscoroutine(goto_res) or hasattr(goto_res, "__await__"):
+                                    await goto_res
+                            await human_sleep(1.0, 2.0)
+                            fb_login_ok = await submit_credentials_on_page(page, fb_email, fb_password)
+                            if fb_login_ok:
+                                fb_auth_done = False
+                                for _ in range(30):
+                                    await asyncio.sleep(0.5)
+                                    post_url = page.url.lower()
+                                    post_parsed = urllib.parse.urlparse(page.url)
+                                    post_p = post_parsed.path.lower()
+
+                                    # a. Màn hình Interstitial "Save browser / Remember device" (Nhớ trình duyệt)
+                                    if "save-device" in post_p or "save-device" in post_url or "save_device" in post_url:
+                                        logger.info("Phát hiện màn hình lưu trình duyệt (Save browser/device). Đang tự động xác nhận...")
+                                        save_btn_sel = (
+                                            'button:has-text("Lưu"), div[role="button"]:has-text("Lưu"), '
+                                            'button:has-text("Lưu trình duyệt"), div[role="button"]:has-text("Lưu trình duyệt"), '
+                                            'button:has-text("Save"), div[role="button"]:has-text("Save"), '
+                                            'button:has-text("Save Browser"), div[role="button"]:has-text("Save Browser"), '
+                                            'button:has-text("Tiếp tục"), div[role="button"]:has-text("Tiếp tục"), '
+                                            'button:has-text("Continue"), div[role="button"]:has-text("Continue"), '
+                                            'button:has-text("Không lưu"), div[role="button"]:has-text("Không lưu"), '
+                                            'button:has-text("Don\'t Save"), div[role="button"]:has-text("Don\'t Save"), '
+                                            'button:has-text("Lúc khác"), div[role="button"]:has-text("Lúc khác"), '
+                                            'button:has-text("Not Now"), div[role="button"]:has-text("Not Now"), '
+                                            'button[type="submit"], button[name="__CONFIRM__"], button#checkpointSubmitButton'
+                                        )
+                                        try:
+                                            save_loc = page.locator(save_btn_sel).first
+                                            if await _safe_eval_count(save_loc) > 0:
+                                                await save_loc.click(timeout=4000, force=True)
+                                                await asyncio.sleep(1.0)
+                                        except Exception as e_sb:
+                                            logger.debug("Lỗi bấm nút save-device: %s", e_sb)
+                                        fb_auth_done = True
+                                        break
+
+                                    # b. Checkpoint / 2FA
+                                    if "checkpoint" in post_p or "checkpoint" in post_url:
+                                        try:
+                                            has_2fa = (
+                                                await page.locator('input[name="approvals_code"], input[autocomplete="one-time-code"]').count() > 0
+                                                or "two_step_verification" in post_url
+                                            )
+                                        except Exception:
+                                            has_2fa = False
+                                        if has_2fa:
+                                            logger.warning("Đăng nhập Facebook gặp checkpoint/2FA xác thực tài khoản. Không thể tự động vượt qua.")
+                                            return False
+                                        cp_btn = page.locator(
+                                            'button#checkpointSubmitButton, button[type="submit"]:has-text("Tiếp tục"), '
+                                            'button:has-text("Continue"), button:has-text("Tiếp tục")'
+                                        ).first
+                                        if await _safe_eval_count(cp_btn) > 0:
+                                            try:
+                                                await cp_btn.click(timeout=4000, force=True)
+                                                await asyncio.sleep(1.0)
+                                                continue
+                                            except Exception:
+                                                pass
+                                        logger.warning("Đăng nhập Facebook gặp checkpoint/2FA xác thực tài khoản. Không thể tự động vượt qua.")
+                                        return False
+
+                                    # c. Lỗi thông tin đăng nhập không hợp lệ
+                                    err_sel = (
+                                        'div[role="alert"], '
+                                        'div:has-text("Mật khẩu bạn đã nhập không chính xác"), '
+                                        'div:has-text("The password that you\'ve entered is incorrect"), '
+                                        'div:has-text("Sai mật khẩu"), '
+                                        'div:has-text("Tài khoản của bạn đã bị vô hiệu hóa"), '
+                                        'div:has-text("Your account has been disabled")'
+                                    )
+                                    try:
+                                        if await page.locator(err_sel).count() > 0:
+                                            logger.warning("Tái đăng nhập Facebook qua login.php không thành công (sai thông tin đăng nhập hoặc form bị chặn).")
+                                            return False
+                                    except Exception:
+                                        pass
+
+                                    # d. Đã thoát khỏi trang đăng nhập
+                                    is_still_login = (
+                                        post_p.startswith("/login")
+                                        or "login_attempt" in post_url
+                                    )
+                                    if not is_still_login and "/business/loginpage" not in post_p:
+                                        fb_auth_done = True
+                                        break
+
+                                    # e. Đã xuất hiện cookie c_user (khi không bị kẹt login_attempt)
+                                    if "login_attempt" not in post_url:
+                                        try:
+                                            c_list = await page.context.cookies()
+                                            if any(c.get("name") == "c_user" and c.get("value") for c in c_list if isinstance(c, dict)):
+                                                fb_auth_done = True
+                                                break
+                                        except Exception:
+                                            pass
+
+                                if not fb_auth_done:
+                                    logger.warning("Tái đăng nhập Facebook qua login.php không thành công (sai thông tin đăng nhập hoặc form bị chặn).")
+                                    return False
+
+                                logger.info(
+                                    "Đăng nhập Facebook.com thành công! Đang lưu session mới và điều hướng lại về Meta Business Suite: %s",
+                                    META_INBOX_COMMENTS_URL,
+                                )
+                                reauth_success = True
+                                try:
+                                    from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
+                                    os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
+                                    await page.context.storage_state(path=str(STORAGE_STATE_FILE))
+                                    export_github_secret_file(str(STORAGE_STATE_FILE))
+                                    sync_storage_secret_to_github()
+                                except Exception as e_mid_save:
+                                    logger.debug("Lỗi lưu storage_state sau facebook.com login: %s", e_mid_save)
+
+                                if hasattr(page, "goto"):
+                                    goto_res = page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=45000)
+                                    if asyncio.iscoroutine(goto_res) or hasattr(goto_res, "__await__"):
+                                        await goto_res
+                                await human_sleep(2.0, 4.0)
+
+                                c_p = urllib.parse.urlparse(page.url).path.lower()
+                                if "/business/loginpage" in c_p or c_p.startswith("/login"):
+                                    for sel in sso_selectors:
+                                        loc = page.locator(sel).first
+                                        if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
+                                            logger.info("Bấm nút SSO bắc cầu phiên sau khi đã tái đăng nhập: %s", sel)
+                                            await loc.click(timeout=5000, force=True)
+                                            for _ in range(10):
+                                                await asyncio.sleep(0.5)
+                                                c_p = urllib.parse.urlparse(page.url).path.lower()
+                                                if "/business/loginpage" not in c_p and not c_p.startswith("/login"):
+                                                    break
+                                            break
+                        except Exception as e_reauth:
+                            err_str = str(e_reauth)
+                            for s in (fb_password, fb_email):
+                                if s and s in err_str:
+                                    err_str = err_str.replace(s, "[REDACTED]")
+                            logger.warning("Lỗi trong quá trình Auto Re-Authentication: %s", err_str)
 
         cur_p = urllib.parse.urlparse(page.url).path.lower()
         if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
@@ -1008,6 +1420,7 @@ async def verify_logged_in(page: Page) -> bool:
             except Exception:
                 pass
 
+        os.makedirs(os.path.dirname(STORAGE_STATE_FILE) or STATE_DIR, exist_ok=True)
         await page.context.storage_state(path=str(STORAGE_STATE_FILE))
 
         # Bảo toàn mọi origins quan trọng (đặc biệt business.facebook.com) từ preserved_origins

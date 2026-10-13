@@ -2,7 +2,7 @@ import asyncio
 import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-from bot.page_bot_engine import verify_logged_in
+from bot.page_bot_engine import submit_credentials_on_page, verify_logged_in
 
 
 class TestVerifyLoggedIn(unittest.IsolatedAsyncioTestCase):
@@ -710,6 +710,649 @@ class TestRestoreStorageStateAndEdgeCases(unittest.IsolatedAsyncioTestCase):
             # Khẳng định tuyệt đối mật khẩu KHÔNG xuất hiện trong log
             self.assertNotIn(super_secret, all_logs)
             self.assertIn("[REDACTED_PASSWORD]", all_logs)
+
+
+class TestAutoReAuthentication(unittest.IsolatedAsyncioTestCase):
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_auto_reauth_via_login_php_success(self, mock_sync, mock_export, mock_sleep):
+        """
+        R1: Khi phiên Facebook hết hạn tại loginpage và nút bắc cầu một chạm không hoạt động:
+        - Tự động điều hướng sang https://www.facebook.com/login.php
+        - Nạp FB_EMAIL và FB_PASSWORD an toàn
+        - Đăng nhập thành công và quay lại META_INBOX_COMMENTS_URL
+        - Cập nhật storage state và đồng bộ secret lên GitHub
+        - Tuyệt đối không rò rỉ FB_EMAIL hoặc FB_PASSWORD vào logs
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "UltraSecretPassword123!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+            mock_page.context.cookies = AsyncMock(return_value=[])
+
+            email_input_mock = AsyncMock()
+            pass_input_mock = AsyncMock()
+            submit_btn_mock = AsyncMock()
+
+            async def fake_submit_click(**kwargs):
+                mock_page.url = "https://www.facebook.com/"
+
+            submit_btn_mock.click = AsyncMock(side_effect=fake_submit_click)
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+                return None
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'Tiếp tục bằng Facebook' in sel:
+                    is_sso = "/business/loginpage" in mock_page.url
+                    mock.first.count.return_value = 1 if is_sso else 0
+                    mock.first.is_visible.return_value = is_sso
+                    mock.first.click = AsyncMock()
+                elif 'input[name="email"]' in sel or 'input[name="pass"]' in sel or 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                    is_login_form = "/login.php" in mock_page.url or mock_page.url.rstrip("/").endswith("/login")
+                    if not is_login_form:
+                        mock.count.return_value = 0
+                        mock.first.count.return_value = 0
+                        mock.first.is_visible.return_value = False
+                        return mock
+
+                    if 'input[name="email"]' in sel:
+                        mock.count.return_value = 1
+                        mock.first = email_input_mock
+                        email_input_mock.count = AsyncMock(return_value=1)
+                    elif 'input[name="pass"]' in sel:
+                        mock.count.return_value = 1
+                        mock.first = pass_input_mock
+                        pass_input_mock.count = AsyncMock(return_value=1)
+                    elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                        mock.count.return_value = 1
+                        mock.first = submit_btn_mock
+                        submit_btn_mock.count = AsyncMock(return_value=1)
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                    mock.count.return_value = 1 if is_inbox else 0
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            with self.assertLogs("dan86_page_bot", level="INFO") as log_capture:
+                res = await verify_logged_in(mock_page)
+
+            self.assertTrue(res)
+            email_input_mock.fill.assert_awaited_with(test_email)
+            pass_input_mock.fill.assert_awaited_with(test_pass)
+            submit_btn_mock.click.assert_awaited()
+            self.assertGreaterEqual(mock_export.call_count, 1)
+            self.assertGreaterEqual(mock_sync.call_count, 1)
+
+            all_logs = " ".join(log_capture.output)
+            self.assertNotIn(test_email, all_logs)
+            self.assertNotIn(test_pass, all_logs)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_auto_reauth_via_inline_login_form_success(self, mock_sync, mock_export, mock_sleep):
+        """
+        R2: Khi loginpage hiển thị form đăng nhập inline (email + pass trực tiếp trên trang):
+        - Điền đầy đủ FB_EMAIL và FB_PASSWORD
+        - Submit form an toàn
+        - Chuyển hướng vào MBS Inbox thành công
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "InlinePass456!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+
+            email_input_mock = AsyncMock()
+            pass_input_mock = AsyncMock()
+            submit_btn_mock = AsyncMock()
+
+            async def fake_submit_click(**kwargs):
+                mock_page.url = "https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512"
+
+            submit_btn_mock.click = AsyncMock(side_effect=fake_submit_click)
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'Tiếp tục bằng Facebook' in sel:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                elif 'input[name="email"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = email_input_mock
+                    email_input_mock.count = AsyncMock(return_value=1)
+                elif 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = pass_input_mock
+                    pass_input_mock.count = AsyncMock(return_value=1)
+                elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel or 'button:has-text("Đăng nhập")' in sel:
+                    mock.count.return_value = 1
+                    mock.first = submit_btn_mock
+                    submit_btn_mock.count = AsyncMock(return_value=1)
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            with self.assertLogs("dan86_page_bot", level="INFO") as log_capture:
+                res = await verify_logged_in(mock_page)
+
+            self.assertTrue(res)
+            email_input_mock.fill.assert_awaited_with(test_email)
+            pass_input_mock.fill.assert_awaited_with(test_pass)
+            submit_btn_mock.click.assert_awaited()
+            all_logs = " ".join(log_capture.output)
+            self.assertNotIn(test_email, all_logs)
+            self.assertNotIn(test_pass, all_logs)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_sso_popup_with_both_email_and_password_success(self, mock_sync, mock_export, mock_sleep):
+        """
+        R2: Khi popup SSO yêu cầu cả tài khoản email và mật khẩu:
+        - Điền đầy đủ FB_EMAIL và FB_PASSWORD vào popup
+        - Submit thành công và popup tự đóng
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "PopupPass789!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'Tiếp tục bằng Facebook' in sel:
+                    mock.first.count.return_value = 1
+                    mock.first.is_visible.return_value = True
+                    mock.first.click = AsyncMock()
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            mock_popup = MagicMock()
+            mock_popup.is_closed.return_value = False
+            mock_popup.wait_for_load_state = AsyncMock()
+            mock_popup.wait_for_event = AsyncMock()
+            mock_popup.close = AsyncMock()
+
+            email_input_mock = AsyncMock()
+            pass_input_mock = AsyncMock()
+            confirm_btn_mock = AsyncMock()
+
+            def popup_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = email_input_mock
+                    email_input_mock.count = AsyncMock(return_value=1)
+                elif 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = pass_input_mock
+                    pass_input_mock.count = AsyncMock(return_value=1)
+                elif 'button[type="submit"]' in sel or 'button[name="login"]' in sel or '__CONFIRM__' in sel:
+                    mock.count.return_value = 1
+                    mock.first = confirm_btn_mock
+                    confirm_btn_mock.count = AsyncMock(return_value=1)
+                else:
+                    mock.first.count.return_value = 0
+                    mock.count.return_value = 0
+                return mock
+
+            mock_popup.locator.side_effect = popup_locator_side_effect
+
+            def on_page_listener(event, cb):
+                cb(mock_popup)
+
+            mock_page.context.on.side_effect = on_page_listener
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            with self.assertLogs("dan86_page_bot", level="INFO") as log_capture:
+                res = await verify_logged_in(mock_page)
+
+            self.assertTrue(res)
+            email_input_mock.fill.assert_awaited_with(test_email)
+            pass_input_mock.fill.assert_awaited_with(test_pass)
+            confirm_btn_mock.click.assert_awaited()
+            all_logs = " ".join(log_capture.output)
+            self.assertNotIn(test_email, all_logs)
+            self.assertNotIn(test_pass, all_logs)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_auto_reauth_login_php_checkpoint_fails_safely(self, mock_sleep):
+        """
+        Khi re-auth sang login.php nhưng gặp 2FA/checkpoint, bot trả về False an toàn và không log credentials.
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "SecretPass123!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+
+            async def fake_submit_click(**kwargs):
+                mock_page.url = "https://www.facebook.com/checkpoint/15000"
+
+            submit_mock = AsyncMock(click=AsyncMock(side_effect=fake_submit_click))
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel or 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first.fill = AsyncMock()
+                    mock.first.count = AsyncMock(return_value=1)
+                elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = submit_mock
+                    submit_mock.count = AsyncMock(return_value=1)
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+            mock_page.goto = AsyncMock()
+
+            res = await verify_logged_in(mock_page)
+            self.assertFalse(res)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_auto_reauth_login_php_stays_at_login_fails_safely(self, mock_sleep):
+        """
+        Khi login.php không thành công (sai pass / tài khoản bị khóa), trang vẫn ở /login.php -> trả về False.
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "WrongPassword!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+
+            async def fake_submit_click(**kwargs):
+                mock_page.url = "https://www.facebook.com/login.php?login_attempt=1"
+
+            submit_mock = AsyncMock(click=AsyncMock(side_effect=fake_submit_click))
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel or 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first.fill = AsyncMock()
+                    mock.first.count = AsyncMock(return_value=1)
+                elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = submit_mock
+                    submit_mock.count = AsyncMock(return_value=1)
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+            mock_page.goto = AsyncMock()
+
+            res = await verify_logged_in(mock_page)
+            self.assertFalse(res)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_auto_reauth_skipped_if_credentials_missing(self, mock_sleep):
+        """
+        Khi FB_EMAIL hoặc FB_PASSWORD không có trong môi trường, bot không thử điều hướng sang login.php.
+        """
+        with patch.dict(os.environ, {"FB_EMAIL": "", "FB_PASSWORD": ""}, clear=True):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+
+            def page_loc(sel):
+                m = AsyncMock()
+                m.count = AsyncMock(return_value=0)
+                m.first = AsyncMock()
+                m.first.count = AsyncMock(return_value=0)
+                m.first.is_visible = AsyncMock(return_value=False)
+                return m
+
+            mock_page.locator.side_effect = page_loc
+            mock_page.goto = AsyncMock()
+
+            res = await verify_logged_in(mock_page)
+            self.assertFalse(res)
+            for call in mock_page.goto.call_args_list:
+                self.assertNotIn("login.php", str(call))
+
+    @patch("bot.page_bot_engine.asyncio.sleep", new_callable=AsyncMock)
+    async def test_submit_credentials_on_page_redacts_credentials_on_exception(self, mock_sleep):
+        """
+        BẢO MẬT 100%: submit_credentials_on_page bắt exception và loại bỏ hoàn toàn mật khẩu & email khỏi logs.
+        """
+        super_secret_pw = "SuperTopSecretPassword999!"
+        super_secret_em = "very_secret_email@dan86.vn"
+
+        mock_target = MagicMock()
+        bad_pass_mock = AsyncMock()
+        bad_pass_mock.fill.side_effect = RuntimeError(f"Failed to fill field with '{super_secret_pw}' for '{super_secret_em}'")
+
+        def loc_side_effect(sel):
+            mock = AsyncMock()
+            if 'input[name="pass"]' in sel or 'input[type="password"]' in sel:
+                mock.count = AsyncMock(return_value=1)
+                bad_pass_mock.count = AsyncMock(return_value=1)
+                mock.first = bad_pass_mock
+            elif 'input[name="email"]' in sel:
+                mock.count = AsyncMock(return_value=1)
+                mock.first.count = AsyncMock(return_value=1)
+                mock.first.fill = AsyncMock()
+            else:
+                mock.count = AsyncMock(return_value=0)
+                mock.first.count = AsyncMock(return_value=0)
+            return mock
+
+        mock_target.locator.side_effect = loc_side_effect
+
+        with self.assertLogs("dan86_page_bot", level="WARNING") as log_capture:
+            res = await submit_credentials_on_page(mock_target, super_secret_em, super_secret_pw)
+
+        self.assertFalse(res)
+        all_logs = " ".join(log_capture.output)
+        self.assertNotIn(super_secret_pw, all_logs)
+        self.assertNotIn(super_secret_em, all_logs)
+        self.assertIn("[REDACTED_PASSWORD]", all_logs)
+        self.assertIn("[REDACTED_EMAIL]", all_logs)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_auto_reauth_via_login_php_with_save_device_interstitial_success(self, mock_sync, mock_export, mock_sleep):
+        """
+        R1 Edge Case: Khi đăng nhập login.php thành công nhưng Facebook chuyển tiếp sang màn hình
+        'Save browser / Remember device' (/login/save-device/):
+        - Bot tự động phát hiện interstitial screen
+        - Bấm nút xác nhận Lưu trình duyệt
+        - Đánh dấu đăng nhập thành công, lưu storage state và điều hướng về MBS Inbox.
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "SaveDevicePass123!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+            mock_page.context.cookies = AsyncMock(return_value=[])
+
+            email_input_mock = AsyncMock()
+            pass_input_mock = AsyncMock()
+            submit_btn_mock = AsyncMock()
+            save_device_btn_mock = AsyncMock()
+
+            async def fake_submit_click(**kwargs):
+                mock_page.url = "https://www.facebook.com/login/save-device/?login_source=login"
+
+            submit_btn_mock.click = AsyncMock(side_effect=fake_submit_click)
+
+            async def fake_save_device_click(**kwargs):
+                mock_page.url = "https://www.facebook.com/"
+
+            save_device_btn_mock.click = AsyncMock(side_effect=fake_save_device_click)
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+                return None
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'Tiếp tục bằng Facebook' in sel:
+                    is_sso = "/business/loginpage" in mock_page.url
+                    mock.first.count.return_value = 1 if is_sso else 0
+                    mock.first.is_visible.return_value = is_sso
+                    mock.first.click = AsyncMock()
+                elif 'input[name="email"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = email_input_mock
+                    email_input_mock.count = AsyncMock(return_value=1)
+                elif 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = pass_input_mock
+                    pass_input_mock.count = AsyncMock(return_value=1)
+                elif 'Lưu' in sel or 'Save' in sel:
+                    mock.count.return_value = 1
+                    mock.first = save_device_btn_mock
+                    save_device_btn_mock.count = AsyncMock(return_value=1)
+                elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = submit_btn_mock
+                    submit_btn_mock.count = AsyncMock(return_value=1)
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            res = await verify_logged_in(mock_page)
+            self.assertTrue(res)
+            save_device_btn_mock.click.assert_awaited()
+            self.assertGreaterEqual(mock_export.call_count, 1)
+            self.assertGreaterEqual(mock_sync.call_count, 1)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_auto_reauth_via_login_php_succeeds_via_c_user_cookie(self, mock_sync, mock_export, mock_sleep):
+        """
+        R1 Edge Case: Khi URL chuyển sang trang trung gian nhưng context cookies chứa cookie 'c_user',
+        bot xác nhận thành công mà không bị kẹt.
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "CookieAuthPass123!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+            # Giả lập c_user xuất hiện trong cookie context sau khi đăng nhập
+            mock_page.context.cookies = AsyncMock(return_value=[
+                {"name": "c_user", "value": "1000888999"},
+                {"name": "xs", "value": "valid_session_token"}
+            ])
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel or 'input[name="pass"]' in sel or 'button[name="login"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = AsyncMock()
+                    mock.first.count = AsyncMock(return_value=1)
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            res = await verify_logged_in(mock_page)
+            self.assertTrue(res)
+            self.assertGreaterEqual(mock_export.call_count, 1)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_auto_reauth_via_login_php_wrong_password_alert_fails_immediately(self, mock_sleep):
+        """
+        R1 Edge Case: Khi Facebook trả về banner cảnh báo sai mật khẩu (role='alert'), bot dừng ngay
+        lập tức và trả về False an toàn thay vì chờ hết 15s timeout.
+        """
+        test_email = "bot_vps@dan86.vn"
+        test_pass = "WrongPassAlert!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.goto = AsyncMock()
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel or 'input[name="pass"]' in sel or 'button[name="login"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = AsyncMock()
+                    mock.first.count = AsyncMock(return_value=1)
+                elif 'div[role="alert"]' in sel or 'Mật khẩu bạn đã nhập không chính xác' in sel:
+                    mock.count.return_value = 1
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            res = await verify_logged_in(mock_page)
+            self.assertFalse(res)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_auto_reauth_exception_redacts_credentials(self, mock_sleep):
+        """
+        BẢO MẬT 100%: Khi quá trình điều hướng sang login.php ném ngoại lệ chứa mật khẩu/email,
+        thông tin nhạy cảm phải được thay thế bằng [REDACTED].
+        """
+        secret_email = "leak_email@dan86.vn"
+        secret_pass = "TopSecretUnredactedPass999!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": secret_email, "FB_PASSWORD": secret_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.goto = AsyncMock(side_effect=RuntimeError(f"Connection failed with credentials {secret_pass} and {secret_email}"))
+
+            def page_loc(sel):
+                mock = AsyncMock()
+                mock.count = AsyncMock(return_value=0)
+                mock.first.count = AsyncMock(return_value=0)
+                mock.first.is_visible = AsyncMock(return_value=False)
+                return mock
+
+            mock_page.locator.side_effect = page_loc
+
+            with self.assertLogs("dan86_page_bot", level="WARNING") as log_capture:
+                res = await verify_logged_in(mock_page)
+
+            self.assertFalse(res)
+            all_logs = " ".join(log_capture.output)
+            self.assertNotIn(secret_pass, all_logs)
+            self.assertNotIn(secret_email, all_logs)
+            self.assertIn("[REDACTED]", all_logs)
+
+    @patch("bot.page_bot_engine.asyncio.sleep", new_callable=AsyncMock)
+    async def test_submit_credentials_on_page_returns_false_if_no_password_field(self, mock_sleep):
+        """
+        submit_credentials_on_page trả về False an toàn nếu trang không có ô nhập mật khẩu.
+        """
+        mock_target = MagicMock()
+        mock_loc = AsyncMock()
+        mock_loc.count = AsyncMock(return_value=0)
+        mock_loc.first = AsyncMock()
+        mock_loc.first.count = AsyncMock(return_value=0)
+        mock_target.locator.return_value = mock_loc
+
+        res = await submit_credentials_on_page(mock_target, "test@dan86.vn", "SomePassword123!")
+        self.assertFalse(res)
+
+    @patch("bot.page_bot_engine.asyncio.sleep", new_callable=AsyncMock)
+    async def test_submit_credentials_on_page_supports_english_and_autocomplete_selectors(self, mock_sleep):
+        """
+        submit_credentials_on_page hỗ trợ tốt các selector tiếng Anh và autocomplete='current-password' trên VPS.
+        """
+        mock_target = MagicMock()
+        email_mock = AsyncMock(count=AsyncMock(return_value=1), fill=AsyncMock())
+        pass_mock = AsyncMock(count=AsyncMock(return_value=1), fill=AsyncMock())
+        btn_mock = AsyncMock(count=AsyncMock(return_value=1), click=AsyncMock())
+
+        def loc_se(sel):
+            mock = AsyncMock()
+            if 'autocomplete="username"' in sel or 'input[name="email"]' in sel:
+                mock.count = AsyncMock(return_value=1)
+                mock.first = email_mock
+            elif 'autocomplete="current-password"' in sel:
+                mock.count = AsyncMock(return_value=1)
+                mock.first = pass_mock
+            elif 'button:has-text("Log in")' in sel:
+                mock.count = AsyncMock(return_value=1)
+                mock.first = btn_mock
+            else:
+                mock.count = AsyncMock(return_value=0)
+                mock.first.count = AsyncMock(return_value=0)
+            return mock
+
+        mock_target.locator.side_effect = loc_se
+
+        res = await submit_credentials_on_page(mock_target, "user@dan86.vn", "EnglishPass123!")
+        self.assertTrue(res)
+        email_mock.fill.assert_awaited_with("user@dan86.vn")
+        pass_mock.fill.assert_awaited_with("EnglishPass123!")
+        btn_mock.click.assert_awaited()
 
 
 if __name__ == "__main__":

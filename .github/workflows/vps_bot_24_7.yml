@@ -50,6 +50,7 @@ jobs:
       - name: 4. Chạy Bot Trực Fanpage DAN86 (Ca làm việc 5 tiếng 20 phút)
         env:
           FB_STORAGE_STATE: ${{ secrets.FB_STORAGE_STATE }}
+          FB_EMAIL: ${{ secrets.FB_EMAIL }}
           FB_PASSWORD: ${{ secrets.FB_PASSWORD }}
           META_INBOX_URL: ${{ vars.META_INBOX_URL || 'https://business.facebook.com/latest/inbox/all?asset_id=104011958817512' }}
           META_MESSENGER_URL: ${{ vars.META_MESSENGER_URL || 'https://business.facebook.com/latest/inbox/messenger?asset_id=104011958817512' }}
