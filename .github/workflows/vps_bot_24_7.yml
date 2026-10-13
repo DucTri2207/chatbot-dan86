@@ -65,7 +65,7 @@ jobs:
         run: |
           # 1. Cập nhật lại Secret FB_STORAGE_STATE lên GitHub nếu có phiên mới được làm mới
           if [ -f state/GITHUB_SECRET_VALUE.txt ]; then
-            gh secret set FB_STORAGE_STATE < state/GITHUB_SECRET_VALUE.txt || true
+            gh secret set FB_STORAGE_STATE -R "${{ github.repository }}" < state/GITHUB_SECRET_VALUE.txt || true
           fi
 
           # 2. Gọi module state_sync để Smart Merge bot_memory.json và push an toàn bằng Fast-Forward
@@ -94,5 +94,5 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GH_PAT || secrets.GITHUB_TOKEN }}
         run: |
-          gh workflow run vps_bot_24_7.yml || true
+          gh workflow run vps_bot_24_7.yml -R "${{ github.repository }}" || true
 
