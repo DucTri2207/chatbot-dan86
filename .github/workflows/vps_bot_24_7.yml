@@ -54,6 +54,7 @@ jobs:
           sudo DEBIAN_FRONTEND=noninteractive apt-get update -qq && sudo DEBIAN_FRONTEND=noninteractive apt-get install -y -qq openvpn curl || true
           timeout 35s python scripts/connect_vn_vpn.py || true
           curl -s --max-time 5 https://ipinfo.io/json || true
+          curl -s --max-time 5 http://ip-api.com/json || true
 
       - name: 4. Chạy Bot Trực Fanpage DAN86 (Ca làm việc 5 tiếng 20 phút)
         env:

@@ -1304,6 +1304,17 @@ async def verify_logged_in(page: Page) -> bool:
                                 goto_res = page.goto("https://www.facebook.com/login.php", wait_until="domcontentloaded", timeout=30000)
                                 if asyncio.iscoroutine(goto_res) or hasattr(goto_res, "__await__"):
                                     await goto_res
+
+                            # 3. Đảm bảo xóa sạch localStorage và sessionStorage trên origin facebook.com
+                            try:
+                                eval_fn2 = getattr(page, "evaluate", None)
+                                if callable(eval_fn2):
+                                    ev_res2 = eval_fn2("() => { try { localStorage.clear(); sessionStorage.clear(); } catch(e){} }")
+                                    if asyncio.iscoroutine(ev_res2) or hasattr(ev_res2, "__await__"):
+                                        await ev_res2
+                            except Exception as e_ev2:
+                                logger.debug("Lỗi xóa storage facebook.com: %s", e_ev2)
+
                             await human_sleep(1.0, 2.0)
                             fb_login_ok = await submit_credentials_on_page(page, fb_email, fb_password)
                             if fb_login_ok:

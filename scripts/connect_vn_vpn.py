@@ -43,19 +43,27 @@ def normalize_country(raw: str) -> str:
 
 
 def ensure_public_dns():
-    """Đảm bảo Linux runner có sẵn DNS công cộng 8.8.8.8 / 1.1.1.1 phòng khi VPN chuyển gateway."""
+    """Đảm bảo Linux runner có sẵn DNS công cộng 8.8.8.8 / 1.1.1.1 ở vị trí ưu tiên đầu phòng khi VPN chuyển gateway."""
     if platform.system().lower() == "linux":
         try:
+            content = ""
             if os.path.exists("/etc/resolv.conf"):
-                with open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore") as f:
-                    content = f.read()
-                if "8.8.8.8" not in content and "1.1.1.1" not in content:
-                    subprocess.run(
-                        ["sudo", "bash", "-c", "echo 'nameserver 8.8.8.8\nnameserver 1.1.1.1' >> /etc/resolv.conf"],
-                        check=False,
-                        timeout=3,
-                        stdin=subprocess.DEVNULL,
-                    )
+                try:
+                    with open("/etc/resolv.conf", "r", encoding="utf-8", errors="ignore") as f:
+                        content = f.read()
+                except Exception:
+                    pass
+            # Kiểm tra xem 8.8.8.8 và 1.1.1.1 đã ở các dòng đầu hay chưa
+            first_lines = [l.strip() for l in content.splitlines()[:3]]
+            if not any("8.8.8.8" in l for l in first_lines):
+                cmd_script = "printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n' | cat - /etc/resolv.conf > /tmp/dan86_resolv.tmp && cp /tmp/dan86_resolv.tmp /etc/resolv.conf"
+                sudo_prefix = ["sudo"] if shutil.which("sudo") else []
+                subprocess.run(
+                    sudo_prefix + ["bash", "-c", cmd_script],
+                    check=False,
+                    timeout=3,
+                    stdin=subprocess.DEVNULL,
+                )
         except Exception as e_dns:
             logger.debug("Lỗi thiết lập DNS công cộng: %s", e_dns)
 
@@ -76,9 +84,18 @@ def get_current_ip_info() -> dict:
             with urllib.request.urlopen(req, timeout=2.5) as resp:
                 data = json.loads(resp.read().decode("utf-8", errors="ignore"))
                 ip = data.get("ip") or data.get("query") or data.get("ipAddress")
-                raw_c = data.get("countryCode") or data.get("country_code") or data.get("country")
-                city = data.get("city", "Unknown")
-                org = data.get("org") or data.get("isp", "Unknown")
+                raw_c = (
+                    data.get("countryCode")
+                    or data.get("country_code")
+                    or data.get("country")
+                    or data.get("countryName")
+                )
+                city = data.get("city") or data.get("cityName", "Unknown")
+                org = (
+                    data.get("org")
+                    or data.get("isp")
+                    or data.get("asnOrganization", "Unknown")
+                )
                 country = normalize_country(raw_c)
                 if ip and country:
                     return {
@@ -271,6 +288,7 @@ def connect_vpn(server: dict, timeout_sec: int = MAX_CONNECT_TIMEOUT_SEC) -> boo
         info = get_current_ip_info()
         logger.info("IP hiện tại: %s | Quốc gia: %s (%s)", info["ip"], info["country"], info["city"])
         if info["country"] == "VN":
+            ensure_public_dns()
             logger.info(
                 "ĐỔI IP THÀNH CÔNG! Đã kết nối OpenVPN Việt Nam: %s (%s - %s)",
                 info["ip"],

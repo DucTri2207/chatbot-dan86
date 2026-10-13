@@ -109,6 +109,25 @@ class TestVpnGateModule(unittest.TestCase):
         self.assertEqual(info["country"], "VN")
         self.assertEqual(info["city"], "Da Nang")
 
+    def test_get_current_ip_info_with_freeipapi_format(self):
+        """Đảm bảo get_current_ip_info trích xuất chuẩn các trường cityName, asnOrganization từ freeipapi."""
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = json.dumps({
+            "ipAddress": "117.5.142.217",
+            "countryCode": "VN",
+            "cityName": "Ho Chi Minh City",
+            "asnOrganization": "Viettel Group",
+        }).encode("utf-8")
+        mock_resp.__enter__.return_value = mock_resp
+
+        with patch("urllib.request.urlopen", return_value=mock_resp):
+            info = vpn_module.get_current_ip_info()
+
+        self.assertEqual(info["ip"], "117.5.142.217")
+        self.assertEqual(info["country"], "VN")
+        self.assertEqual(info["city"], "Ho Chi Minh City")
+        self.assertEqual(info["org"], "Viettel Group")
+
     def test_get_current_ip_info_all_fail_returns_unknown(self):
         """Khi tất cả dịch vụ GeoIP gặp sự cố, hàm fallback an toàn không gây sập."""
         with patch("urllib.request.urlopen", side_effect=Exception("Network error")):
@@ -116,6 +135,28 @@ class TestVpnGateModule(unittest.TestCase):
 
         self.assertEqual(info["ip"], "Unknown")
         self.assertEqual(info["country"], "Unknown")
+
+    @patch("platform.system", return_value="Linux")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", unittest.mock.mock_open(read_data="nameserver 127.0.0.53\noptions edns0"))
+    @patch("subprocess.run")
+    def test_ensure_public_dns_executes_printf_prepend_on_linux(self, mock_sub, mock_exists, mock_sys):
+        """Đảm bảo trên Linux runner, ensure_public_dns gọi printf chèn 8.8.8.8 vào đầu resolv.conf."""
+        vpn_module.ensure_public_dns()
+        self.assertTrue(mock_sub.called)
+        cmd_args = mock_sub.call_args[0][0]
+        cmd_str = " ".join(cmd_args)
+        self.assertIn("printf 'nameserver 8.8.8.8\\nnameserver 1.1.1.1\\n'", cmd_str)
+        self.assertIn("/etc/resolv.conf", cmd_str)
+
+    @patch("platform.system", return_value="Linux")
+    @patch("os.path.exists", return_value=True)
+    @patch("builtins.open", unittest.mock.mock_open(read_data="nameserver 8.8.8.8\nnameserver 1.1.1.1"))
+    @patch("subprocess.run")
+    def test_ensure_public_dns_skips_when_already_configured(self, mock_sub, mock_exists, mock_sys):
+        """Khi 8.8.8.8 đã có sẵn ở các dòng đầu, ensure_public_dns bỏ qua không gọi subprocess."""
+        vpn_module.ensure_public_dns()
+        self.assertFalse(mock_sub.called)
 
     @patch("shutil.which", return_value=None)
     def test_connect_vpn_missing_openvpn_returns_false(self, mock_which):
