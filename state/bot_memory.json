@@ -368,6 +368,17 @@
       "post_id": "1162453116306719",
       "dom_index": 1,
       "inbox_attempts": 2
+    },
+    "cmt:1164344392784258:1:a6b51bc5b678b3fe": {
+      "author": "Huy Gia",
+      "comment_text": ".",
+      "public_reply": "Dạ DAN86 xin chào Huy Gia! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư để shop tư vấn nhanh nhất cho mình nhé! 🎁",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ shop chào Huy Gia ạ! Cảm ơn bạn đã bình luận quan tâm đến Quà tặng thuần Việt DAN86 (CTY TNHH Bá Lộc Green). 🌾\nHiện shop đang có sẵn nhiều mẫu set quà tặng tinh tế kết hợp đặc sản và thủ công truyền thống:\n- Hộp quà mây tre đan, túi cỏ bàng, khăn rằn dệt tay.\n- Nông sản rang mộc, trà thảo mộc hữu cơ, mật ong rừng, tinh dầu thiên nhiên.\n🌐 Chi tiết sản phẩm & bảng giá: https://dan86.vn\nBạn đang cần tìm quà tặng cho cá nhân hay cho đoàn/doanh nghiệp để shop hỗ trợ mình ngay nhé!",
+      "replied_at": 1791855997.885316,
+      "post_id": "1164344392784258",
+      "dom_index": 1,
+      "inbox_attempts": 1
     }
   },
   "conversations": {
@@ -515,11 +526,18 @@
       "last_bot_reply_ts": 1791855730.1623783,
       "last_interaction_ts": 1791855730.1623783,
       "source": "prior_history"
+    },
+    "name:huy gia": {
+      "customer_name": "Huy Gia",
+      "stage": 1,
+      "last_replied_customer_msg": ".",
+      "last_bot_reply_ts": 1791855997.885316,
+      "source": "comment_private_reply"
     }
   },
   "stats": {
-    "comments_replied": 42,
-    "private_inboxes_from_comment": 23,
+    "comments_replied": 43,
+    "private_inboxes_from_comment": 24,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
