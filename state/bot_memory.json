@@ -358,17 +358,6 @@
       "dom_index": 1,
       "inbox_attempts": 1
     },
-    "cmt:1162453116306719:1:0a00ae38a364bc69": {
-      "author": "Đức Trí",
-      "comment_text": "...",
-      "public_reply": "(Đã phản hồi bình luận công khai)",
-      "private_inbox_sent": false,
-      "private_reply_text": "Chào Đức Trí, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
-      "replied_at": 1791855159.3519533,
-      "post_id": "1162453116306719",
-      "dom_index": 1,
-      "inbox_attempts": 2
-    },
     "cmt:1164344392784258:1:a6b51bc5b678b3fe": {
       "author": "Huy Gia",
       "comment_text": ".",
@@ -422,6 +411,17 @@
       "replied_at": 1791895756.429158,
       "post_id": "1132187092666655",
       "dom_index": 4,
+      "inbox_attempts": 1
+    },
+    "cmt:1162453116306719:1:0a00ae38a364bc69": {
+      "author": "Đức Trí",
+      "comment_text": "...",
+      "public_reply": "Dạ chào Đức Trí, DAN86 đã nhắn tin riêng tư vấn mẫu quà tặng và ưu đãi cho mình rồi ạ. Mời bạn kiểm tra hộp thư hoặc mục tin nhắn chờ nhé! 🌾",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ chào Đức Trí ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Bạn có thể xem nhanh các set quà tại website: https://dan86.vn\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
+      "replied_at": 1791900621.2143764,
+      "post_id": "1162453116306719",
+      "dom_index": 1,
       "inbox_attempts": 1
     }
   },
@@ -531,7 +531,7 @@
       "last_replied_customer_msg": "khóa voi",
       "last_bot_reply_ts": 1791895756.429158,
       "source": "comment_private_reply",
-      "last_interaction_ts": 1791899098.7412505
+      "last_interaction_ts": 1791899495.4297676
     },
     "name:bach mai": {
       "customer_name": "Bach Mai",
@@ -545,8 +545,8 @@
       "stage": 1,
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
-      "last_bot_reply_ts": 1791876551.508913,
-      "last_interaction_ts": 1791878759.5045595
+      "last_bot_reply_ts": 1791900621.2143764,
+      "last_interaction_ts": 1791900715.1858237
     },
     "tid:100009356156734": {
       "customer_name": "Uyên Phạm",
@@ -584,7 +584,7 @@
       "stage": 1,
       "last_replied_customer_msg": "e xin giá ạ",
       "last_bot_reply_ts": 1791878872.384944,
-      "last_interaction_ts": 1791899120.295247,
+      "last_interaction_ts": 1791899811.7246306,
       "source": "prior_history"
     },
     "name:thi thi": {
@@ -617,11 +617,19 @@
       "last_bot_reply_ts": 1791895805.726113,
       "last_interaction_ts": 1791895805.726113,
       "source": "prior_history"
+    },
+    "tid:1608254114": {
+      "customer_name": "Mai Lâm",
+      "stage": 1,
+      "last_replied_customer_msg": "cho mình xem mẫu trâu",
+      "last_bot_reply_ts": 1791899639.5773723,
+      "last_interaction_ts": 1791899639.5773723,
+      "source": "prior_history"
     }
   },
   "stats": {
     "comments_replied": 47,
-    "private_inboxes_from_comment": 28,
+    "private_inboxes_from_comment": 29,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
