@@ -383,13 +383,13 @@
     "cmt:1166938839191480:1:493efbe7217ba63b": {
       "author": "Đức Trí",
       "comment_text": "...",
-      "public_reply": "Dạ DAN86 xin chào Đức Trí! Thông tin chi tiết và ưu đãi set quà đã được shop gửi vào Messenger của bạn rồi ạ. Bạn check hộp thư để shop tư vấn nhanh nhất cho mình nhé! 🎁",
-      "private_inbox_sent": false,
-      "private_reply_text": "Dạ chào Đức Trí ạ, DAN86 vừa nhận được bình luận của mình trên bài đăng! 🎁\nBên em có đầy đủ các dòng set quà từ bình dân đến cao cấp (hộp mây tre, túi cỏ bàng, khăn rằn, cà phê phin, trà thảo mộc...).\n🌐 Bạn có thể xem nhanh các set quà tại website: https://dan86.vn\nBạn cho shop xin nhu cầu hoặc mức ngân sách dự kiến để shop gửi mẫu chuẩn nhất cho mình nha!",
-      "replied_at": 1791866026.43032,
+      "public_reply": "(Đã phản hồi bình luận công khai)",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ DAN86 chào Đức Trí nhé! Shop thấy mình vừa bình luận trên bài viết của trang nên nhắn tin hỗ trợ mình ngay ạ. ❤️\nCác set quà bên em đều được làm thủ công tỉ mỉ từ mây tre đan, cỏ bàng kết hợp đặc sản thuần Việt, nhận thiết kế riêng và in logo theo yêu cầu.\n🌐 Mời bạn xem trọn bộ mẫu & bảng giá tại: https://dan86.vn\nDạ mình dự định đặt số lượng khoảng bao nhiêu set để bên em báo giá tốt nhất cho mình ạ?",
+      "replied_at": 1791866184.4024606,
       "post_id": "1166938839191480",
       "dom_index": 1,
-      "inbox_attempts": 1
+      "inbox_attempts": 2
     }
   },
   "conversations": {
@@ -511,15 +511,15 @@
       "stage": 1,
       "last_replied_customer_msg": "set quà 450k",
       "last_bot_reply_text": "Dạ DAN86 đã nhận được tin nhắn của Đức Trí rồi ạ! Hiện nhân viên tư vấn của shop đang kiểm tra thông tin và sẽ liên hệ lại hỗ trợ mình ngay nhé. Nếu cần gấp bạn có thể gọi hoặc nhắn Zalo Hotline: 0933 133 516 ạ! ❤️",
-      "last_bot_reply_ts": 1791851085.8333383,
-      "last_interaction_ts": 1791828430.0691576
+      "last_bot_reply_ts": 1791866184.4024606,
+      "last_interaction_ts": 1791866283.6966193
     },
     "tid:100009356156734": {
       "customer_name": "Uyên Phạm",
       "stage": 1,
       "last_replied_customer_msg": "dạ cảm ơn shop nha",
       "last_bot_reply_ts": 1791813635.9592998,
-      "last_interaction_ts": 1791813635.9592998,
+      "last_interaction_ts": 1791866286.8544927,
       "source": "prior_history"
     },
     "name:vân kim": {
@@ -548,7 +548,7 @@
   },
   "stats": {
     "comments_replied": 44,
-    "private_inboxes_from_comment": 24,
+    "private_inboxes_from_comment": 25,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
