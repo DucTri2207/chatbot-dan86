@@ -374,21 +374,35 @@ class BotMemoryStore:
 
         # 4. Kiểm tra trong bộ nhớ:
         # 4.1 Khóa định danh duy nhất của bình luận này đã nằm trong replied_comments
-        if key in self.data["replied_comments"]:
-            return False, key
-
-        # 4.2 Kiểm tra nếu bình luận này đã được rep trước đó trên cùng bài viết (tránh lệch key khi dom_index thay đổi)
+        # 4.2 Hoặc đã tồn tại bản ghi bình luận cùng tác giả + cùng nội dung trên cùng bài viết
         existing_rec = self.get_comment_record(
             comment_key=key,
             author_name=clean_name,
             comment_text=comment_text,
             post_id=post_id,
         )
+        current_time = now_ts if now_ts is not None else time.time()
+        from bot.bot_config import CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS
+        effective_cooldown = max(customer_cooldown_seconds, CUSTOMER_ANTI_SPAM_COOLDOWN_SECONDS, 60.0)
+
         if existing_rec is not None:
+            r_ts = float(existing_rec.get("replied_at", 0))
+            p_reply = str(existing_rec.get("public_reply", "")).strip()
+
+            # Nếu bình luận vừa được phản hồi trong thời gian cooldown:
+            # Tuyệt đối không trả lời lại để chống spam và đợi Facebook DOM cập nhật.
+            if current_time - r_ts < effective_cooldown:
+                return False, key
+
+            # Nếu bản ghi cũ trong memory chỉ là nhãn kỹ thuật (chưa từng có câu trả lời công khai thật):
+            # và trên DOM thực tế KHÔNG có phản hồi của Page (has_page_reply_in_dom == False):
+            # -> CẦN TRẢ LỜI CÔNG KHAI THẬT CHO KHÁCH!
+            if not has_page_reply_in_dom and p_reply.startswith("("):
+                return True, key
+
             return False, key
 
         # 5. Cooldown chống spam cấp độ khách hàng (nếu được kích hoạt)
-        current_time = now_ts if now_ts is not None else time.time()
         if customer_cooldown_seconds > 0:
             if self.is_customer_in_cooldown(clean_name, cooldown_seconds=customer_cooldown_seconds, now_ts=current_time):
                 return False, key

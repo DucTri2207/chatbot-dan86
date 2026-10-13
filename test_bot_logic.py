@@ -809,6 +809,62 @@ class TestDan86BotLogic(unittest.TestCase):
             self.assertIn("Chị Nga", formatted)
             self.assertNotIn("{name}", formatted)
 
+    def test_15_dummy_technical_comment_re_evaluated_when_dom_unreplied(self) -> None:
+        """
+        Đảm bảo nếu bản ghi cũ trong memory chỉ là nhãn kỹ thuật (ví dụ: '(Đã phản hồi bình luận công khai)')
+        nhưng trên DOM thực tế CHƯA CÓ câu trả lời của Page -> Bot PHẢI cho phép trả lời thật cho khách.
+        """
+        post_id = "1162453116306719"
+        author = "Đức Trí"
+        text = "..."
+        t0 = 1000.0
+
+        # Giả lập bản ghi cũ chỉ có nhãn kỹ thuật
+        key = "cmt:1162453116306719:1:0a00ae38a364bc69"
+        self.memory.data["replied_comments"][key] = {
+            "author": author,
+            "comment_text": text,
+            "public_reply": "(Đã phản hồi bình luận công khai)",
+            "private_inbox_sent": False,
+            "replied_at": t0,
+            "post_id": post_id,
+            "dom_index": 1,
+            "inbox_attempts": 2,
+        }
+
+        # Nếu trong thời gian cooldown (< 60s): Không rep
+        should_rep_cool, _ = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=t0 + 30.0,
+        )
+        self.assertFalse(should_rep_cool, "Trong thời gian cooldown phải tạm hoãn để chống spam!")
+
+        # Sau khi hết cooldown (> 60s) và DOM vẫn chưa có Page reply: BẮT BUỘC cho phép rep thật!
+        should_rep_after_cd, _ = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=text,
+            has_page_reply_in_dom=False,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=t0 + 120.0,
+        )
+        self.assertTrue(should_rep_after_cd, "Bản ghi cũ chỉ là dummy marker và DOM chưa có reply -> Bắt buộc phải rep!")
+
+        # Nhưng nếu trên DOM ĐÃ CÓ phản hồi của Page (has_page_reply_in_dom=True): Tuyệt đối không rep trùng!
+        should_rep_dom_has, _ = self.memory.should_reply_comment(
+            author_name=author,
+            comment_text=text,
+            has_page_reply_in_dom=True,
+            post_id=post_id,
+            dom_index=1,
+            now_ts=t0 + 120.0,
+        )
+        self.assertFalse(should_rep_dom_has, "Trên DOM đã có Page reply -> Tuyệt đối không rep trùng!")
+
 
 if __name__ == "__main__":
     unittest.main(verbosity=2)
