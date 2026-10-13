@@ -339,6 +339,129 @@ class TestIncognitoCleanSlateReAuth(unittest.IsolatedAsyncioTestCase):
             res = await verify_logged_in(mock_page)
             self.assertTrue(res)
 
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_clean_slate_post_reauth_handles_sso_popup_consent(self, mock_sync, mock_export, mock_sleep):
+        """
+        R3: Đảm bảo sau khi Clean Slate đăng nhập thành công vào facebook.com,
+        nếu quay lại Meta Business Suite vẫn hiển thị nút SSO bắc cầu:
+        Hệ thống tự động bắt popup SSO, bấm nút consent 'Tiếp tục dưới tên Đức Trí',
+        chờ popup đóng và chuyển hướng thành công vào MBS Inbox.
+        """
+        test_email = "dan86_owner@dan86.vn"
+        test_pass = "SecureCleanSlatePass123!"
+
+        with patch.dict(os.environ, {"FB_EMAIL": test_email, "FB_PASSWORD": test_pass}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.clear_cookies = AsyncMock()
+            mock_page.context.storage_state = AsyncMock()
+            mock_page.evaluate = AsyncMock()
+            mock_page.context.cookies = AsyncMock(return_value=[])
+
+            # Popup mock
+            mock_popup = MagicMock()
+            mock_popup.is_closed.return_value = False
+            mock_popup.wait_for_load_state = AsyncMock()
+            mock_popup.url = "https://www.facebook.com/dialog/oauth"
+            mock_popup.close = AsyncMock()
+            async def fake_popup_close():
+                mock_popup.is_closed.return_value = True
+            mock_popup.close.side_effect = fake_popup_close
+
+            consent_clicked = False
+
+            def popup_loc(sel):
+                nonlocal consent_clicked
+                m = AsyncMock()
+                if "Đức Trí" in sel or "Tiếp tục" in sel:
+                    m.count = AsyncMock(return_value=1)
+                    m.is_visible = AsyncMock(return_value=True)
+                    async def fake_consent_click(**kwargs):
+                        nonlocal consent_clicked
+                        consent_clicked = True
+                        mock_popup.is_closed.return_value = True
+                    m.click = AsyncMock(side_effect=fake_consent_click)
+                    m.first = m
+                elif 'input[name="pass"]' in sel or 'input[type="password"]' in sel:
+                    m.count = AsyncMock(return_value=0)
+                else:
+                    m.count = AsyncMock(return_value=0)
+                    m.first = m
+                return m
+
+            mock_popup.locator.side_effect = popup_loc
+
+            def on_page_listener(event, cb):
+                cb(mock_popup)
+            mock_page.context.on.side_effect = on_page_listener
+            mock_page.context.remove_listener = MagicMock()
+
+            login_count = 0
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+                if "/login.php" in url:
+                    pass
+                elif "/latest/inbox" in url:
+                    if not consent_clicked:
+                        mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+                    else:
+                        mock_page.url = "https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512"
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            async def fake_submit_click(**kwargs):
+                nonlocal login_count
+                login_count += 1
+                mock_page.url = "https://www.facebook.com/"
+                mock_page.context.cookies.return_value = [{"name": "c_user", "value": "100012345678"}]
+
+            submit_btn_mock = AsyncMock(count=AsyncMock(return_value=1), click=AsyncMock(side_effect=fake_submit_click))
+            email_input_mock = AsyncMock(count=AsyncMock(return_value=1), fill=AsyncMock())
+            pass_input_mock = AsyncMock(count=AsyncMock(return_value=1), fill=AsyncMock())
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="email"]' in sel:
+                    is_login_php = "/login.php" in mock_page.url
+                    mock.count.return_value = 1 if is_login_php else 0
+                    mock.first = email_input_mock
+                elif 'input[name="pass"]' in sel:
+                    is_login_php = "/login.php" in mock_page.url
+                    mock.count.return_value = 1 if is_login_php else 0
+                    mock.first = pass_input_mock
+                elif 'button[name="login"]' in sel or 'button[type="submit"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = submit_btn_mock
+                elif 'Tiếp tục bằng Facebook' in sel or 'Tiếp tục dưới tên' in sel:
+                    has_sso = login_count > 0 and "/business/loginpage" in mock_page.url
+                    mock.count.return_value = 1 if has_sso else 0
+                    mock.first.count.return_value = 1 if has_sso else 0
+                    mock.first.is_visible.return_value = has_sso
+                    async def fake_sso_click(**kwargs):
+                        mock_page.url = "https://business.facebook.com/latest/inbox/facebook?asset_id=104011958817512"
+                    mock.first.click = AsyncMock(side_effect=fake_sso_click)
+                    mock.last = mock.first
+                elif '[data-pagelet*="ThreadList"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            res = await verify_logged_in(mock_page)
+            self.assertTrue(res)
+            self.assertTrue(consent_clicked)
+            self.assertTrue(mock_popup.is_closed())
+
 
 if __name__ == "__main__":
     unittest.main()

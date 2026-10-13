@@ -37,7 +37,7 @@ CHECK_INTERVAL_SEC = 2.0
 def normalize_country(raw: str) -> str:
     """Chuẩn hóa mã quốc gia sang dạng chuẩn ISO-2 (VN, US, ...)."""
     raw_str = (raw or "").strip().upper()
-    if raw_str in ["VN", "VIETNAM", "VIET NAM", "VNM"]:
+    if raw_str in ["VN", "VIETNAM", "VIET NAM", "VNM"] or "VIET" in raw_str or "VIỆT" in raw_str:
         return "VN"
     return raw_str
 
@@ -149,7 +149,7 @@ def fetch_vn_vpn_servers() -> list:
     for row in reader:
         c_short = (row.get("CountryShort") or "").strip().upper()
         c_long = (row.get("CountryLong") or "").strip().upper()
-        if c_short == "VN" or "VIET" in c_long:
+        if c_short == "VN" or "VIET" in c_long or "VIỆT" in c_long:
             ovpn_b64 = (row.get("OpenVPN_ConfigData_Base64") or "").strip()
             if ovpn_b64:
                 try:

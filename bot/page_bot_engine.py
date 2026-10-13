@@ -758,6 +758,379 @@ async def submit_credentials_on_page(target_page, email: str = "", password: str
         return False
 
 
+SSO_BUTTON_SELECTORS = [
+    'div[role="button"]:has-text("Tiếp tục bằng Facebook")',
+    'button:has-text("Tiếp tục bằng Facebook")',
+    'a[role="button"]:has-text("Tiếp tục bằng Facebook")',
+    'a:has-text("Tiếp tục bằng Facebook")',
+    'div[role="button"]:has-text("Tiếp tục dưới tên")',
+    'button:has-text("Tiếp tục dưới tên")',
+    'a[role="button"]:has-text("Tiếp tục dưới tên")',
+    'a:has-text("Tiếp tục dưới tên")',
+    'div[role="button"]:has-text("Log in with Facebook")',
+    'button:has-text("Log in with Facebook")',
+    'a[role="button"]:has-text("Log in with Facebook")',
+    'a:has-text("Log in with Facebook")',
+    'div:has-text("Tiếp tục bằng Facebook")',
+    'div:has-text("Tiếp tục dưới tên")',
+    'div:has-text("Log in with Facebook")',
+]
+
+SSO_CONSENT_SELECTORS = (
+    'div[role="button"]:has-text("Tiếp tục dưới tên"), '
+    'button:has-text("Tiếp tục dưới tên"), '
+    'a[role="button"]:has-text("Tiếp tục dưới tên"), '
+    'div[role="button"]:has-text("Tiếp tục với tư cách"), '
+    'button:has-text("Tiếp tục với tư cách"), '
+    'div[role="button"]:has-text("Continue as"), '
+    'button:has-text("Continue as"), '
+    'div[role="button"]:has-text("Tiếp tục"), '
+    'button:has-text("Tiếp tục"), '
+    'a[role="button"]:has-text("Tiếp tục"), '
+    '[aria-label*="Tiếp tục"], '
+    'div[role="button"]:has-text("Đức Trí"), '
+    'button:has-text("Đức Trí"), '
+    '[aria-label*="Đức Trí"], '
+    'button[name="__CONFIRM__"], '
+    'button[name="login"], '
+    'input[type="submit"], '
+    'div[role="button"]:has-text("Continue"), '
+    'button:has-text("Continue"), '
+    'a[role="button"]:has-text("Continue"), '
+    '[aria-label*="Continue"], '
+    'div[role="button"]:has-text("Xác nhận"), '
+    'button:has-text("Xác nhận"), '
+    'div[role="button"]:has-text("Confirm"), '
+    'button:has-text("Confirm")'
+)
+
+
+async def attempt_sso_bridge_on_page(page: Page, sso_selectors: Optional[list] = None) -> bool:
+    """
+    Bấm nút SSO bắc cầu phiên ('Tiếp tục bằng Facebook' / 'Tiếp tục dưới tên...') và xử lý popup xác nhận:
+    - Bắt sự kiện 'page' (popup mở ra) song song với theo dõi chuyển hướng trang chính.
+    - Trong popup: Điền mật khẩu nếu yêu cầu, bấm nút 'Tiếp tục dưới tên...' / 'Tiếp tục' để xác nhận.
+    - Điều hướng về META_INBOX_COMMENTS_URL và kiểm tra trạng thái thoát khỏi loginpage.
+    """
+    import urllib.parse
+
+    selectors = sso_selectors or SSO_BUTTON_SELECTORS
+    clicked = False
+    sso_success = False
+
+    async def handle_sso_password(p_target) -> bool:
+        fb_password = os.environ.get("FB_PASSWORD", "").strip()
+        if (fb_password.startswith('"') and fb_password.endswith('"')) or (
+            fb_password.startswith("'") and fb_password.endswith("'")
+        ):
+            fb_password = fb_password[1:-1].strip()
+
+        fb_email = os.environ.get("FB_EMAIL", "").strip()
+        if (fb_email.startswith('"') and fb_email.endswith('"')) or (
+            fb_email.startswith("'") and fb_email.endswith("'")
+        ):
+            fb_email = fb_email[1:-1].strip()
+
+        if not fb_password:
+            logger.warning(
+                "Popup SSO yêu cầu nhập mật khẩu thủ công nhưng biến môi trường FB_PASSWORD chưa được cấu hình. "
+                "Đóng popup để không chặn vòng quét."
+            )
+            try:
+                await p_target.close()
+            except Exception:
+                pass
+            return False
+
+        logger.info("Popup SSO yêu cầu xác nhận mật khẩu. Đang tự động nạp mật khẩu an toàn từ biến môi trường...")
+        try:
+            if fb_email:
+                try:
+                    em_loc = p_target.locator('input[name="email"], input[type="email"], input#email').first
+                    if await em_loc.count() > 0:
+                        await em_loc.fill(fb_email)
+                        await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+
+            p_input = p_target.locator('input[name="pass"], input[type="password"]').first
+            await p_input.fill(fb_password)
+            await asyncio.sleep(0.3)
+
+            pop_login_sel = (
+                'button[type="submit"], '
+                'button[name="login"], '
+                'button[name="__CONFIRM__"], '
+                'input[type="submit"], '
+                'div[role="button"][aria-label="Đăng nhập"], '
+                'div[role="button"]:has-text("Đăng nhập"), '
+                'button:has-text("Đăng nhập"), '
+                'div[role="button"]:has-text("Log In"), '
+                'div[role="button"]:has-text("Log in"), '
+                'button:has-text("Log In"), '
+                'button:has-text("Log in"), '
+                'div[role="button"]:has-text("Xác nhận"), '
+                'button:has-text("Xác nhận"), '
+                'div[role="button"]:has-text("Confirm"), '
+                'button:has-text("Confirm")'
+            )
+            sub_btn = p_target.locator(pop_login_sel).first
+            sub_count = await _safe_eval_count(sub_btn)
+            if sub_count == 0:
+                sub_btn = p_target.locator(
+                    'div[role="button"]:has-text("Tiếp tục"), '
+                    'button:has-text("Tiếp tục"), '
+                    'div[role="button"]:has-text("Continue"), '
+                    'button:has-text("Continue")'
+                ).first
+                sub_count = await _safe_eval_count(sub_btn)
+
+            if sub_count > 0:
+                try:
+                    await sub_btn.click(timeout=4000, force=True)
+                except Exception:
+                    await p_input.press("Enter")
+            else:
+                await p_input.press("Enter")
+
+            # R3 FIX: Kiểm tra và bấm nút xác nhận 'Tiếp tục dưới tên...' nếu popup chuyển sang màn hình consent
+            for _ in range(10):
+                if getattr(p_target, "is_closed", lambda: False)():
+                    break
+                rem_p = await p_target.locator('input[name="pass"], input[type="password"]').count()
+                if rem_p == 0:
+                    c_btn = p_target.locator(SSO_CONSENT_SELECTORS).first
+                    if await _safe_eval_count(c_btn) > 0 and await _safe_eval_visible(c_btn):
+                        logger.info("Bấm nút tiếp tục xác nhận SSO trong popup sau khi nạp mật khẩu...")
+                        try:
+                            await c_btn.click(timeout=4000, force=True)
+                        except Exception:
+                            pass
+                        break
+                await asyncio.sleep(0.4)
+
+            # Chờ popup xử lý và tự đóng (tối đa 12s)
+            try:
+                await p_target.wait_for_event("close", timeout=12000)
+                logger.info("Popup SSO xác nhận mật khẩu thành công và đã tự đóng.")
+                return True
+            except Exception:
+                if not getattr(p_target, "is_closed", lambda: False)():
+                    c_btn_last = p_target.locator(SSO_CONSENT_SELECTORS).first
+                    if await _safe_eval_count(c_btn_last) > 0 and await _safe_eval_visible(c_btn_last):
+                        try:
+                            await c_btn_last.click(timeout=3000, force=True)
+                            await asyncio.sleep(1.0)
+                        except Exception:
+                            pass
+
+                    if getattr(p_target, "is_closed", lambda: False)():
+                        logger.info("Popup SSO đã hoàn tất xác nhận mật khẩu và tự đóng.")
+                        return True
+
+                    pop_url = getattr(p_target, "url", "").lower()
+                    rem_pass_after = await p_target.locator('input[name="pass"], input[type="password"]').count()
+                    has_checkpoint = (
+                        "checkpoint" in pop_url
+                        or await p_target.locator('input[name="approvals_code"]').count() > 0
+                    )
+                    if rem_pass_after > 0 or has_checkpoint:
+                        logger.warning(
+                            "Popup SSO xác nhận mật khẩu không thành công (mật khẩu không đúng hoặc gặp checkpoint/2FA). Đóng popup."
+                        )
+                        try:
+                            await p_target.close()
+                        except Exception:
+                            pass
+                        return False
+                    else:
+                        logger.info("Popup SSO đã hoàn tất xác nhận mật khẩu.")
+                        try:
+                            await p_target.close()
+                        except Exception:
+                            pass
+                        return True
+                return True
+        except Exception as e_pw:
+            err_msg = str(e_pw)
+            if fb_password and fb_password in err_msg:
+                err_msg = err_msg.replace(fb_password, "[REDACTED_PASSWORD]")
+            if fb_email and fb_email in err_msg:
+                err_msg = err_msg.replace(fb_email, "[REDACTED_EMAIL]")
+            logger.warning("Lỗi trong quá trình tự động xác thực mật khẩu SSO: %s", err_msg)
+            try:
+                await p_target.close()
+            except Exception:
+                pass
+            return False
+
+    for sel in selectors:
+        base_loc = page.locator(sel)
+        loc = base_loc.first if hasattr(base_loc, "first") else base_loc
+        if await _safe_eval_count(loc) == 0:
+            if hasattr(base_loc, "last") and await _safe_eval_count(base_loc.last) > 0:
+                loc = base_loc.last
+            elif await _safe_eval_count(base_loc) > 0:
+                loc = base_loc
+        if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
+            logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
+            popup_future = asyncio.get_event_loop().create_future()
+            def on_sso_page(new_p):
+                if not popup_future.done():
+                    popup_future.set_result(new_p)
+
+            page.context.on("page", on_sso_page)
+            try:
+                await loc.click(timeout=5000, force=True)
+                clicked = True
+
+                async def wait_popup():
+                    return await popup_future
+
+                async def watch_main_page_nav():
+                    while True:
+                        await asyncio.sleep(0.4)
+                        c_p = urllib.parse.urlparse(page.url).path.lower()
+                        if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
+                            return True
+                        try:
+                            if await page.locator('input[name="pass"], input[type="password"]').count() > 0:
+                                return "inline_form"
+                        except Exception:
+                            pass
+
+                popup_task = asyncio.create_task(wait_popup())
+                redirect_task = asyncio.create_task(watch_main_page_nav())
+
+                done, pending = await asyncio.wait(
+                    [popup_task, redirect_task],
+                    timeout=15.0,
+                    return_when=asyncio.FIRST_COMPLETED,
+                )
+                for p in pending:
+                    p.cancel()
+
+                if popup_task in done and not popup_task.cancelled() and popup_task.exception() is None:
+                    try:
+                        popup = popup_task.result()
+                        load_state_fn = getattr(popup, "wait_for_load_state", None)
+                        if callable(load_state_fn):
+                            ls_res = load_state_fn("domcontentloaded")
+                            if asyncio.iscoroutine(ls_res) or hasattr(ls_res, "__await__"):
+                                await ls_res
+                        await asyncio.sleep(0.3)
+
+                        is_cl = getattr(popup, "is_closed", lambda: False)()
+                        if not is_cl:
+                            pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                            email_count = await popup.locator('input[name="email"], input[type="email"], input#email').count()
+                            if pass_count > 0 or email_count > 0:
+                                sso_success = await handle_sso_password(popup)
+                            else:
+                                p_btn = popup.locator(SSO_CONSENT_SELECTORS).first
+                                if await _safe_eval_count(p_btn) > 0:
+                                    logger.info("Bấm nút tiếp tục xác nhận SSO trong popup...")
+                                    await p_btn.click(timeout=4000, force=True)
+                                await asyncio.sleep(0.3)
+
+                                if not getattr(popup, "is_closed", lambda: False)():
+                                    has_pass_prompt = False
+                                    for _ in range(20):
+                                        if getattr(popup, "is_closed", lambda: False)():
+                                            break
+                                        if (
+                                            await popup.locator('input[name="pass"], input[type="password"]').count() > 0
+                                            or await popup.locator('input[name="email"], input[type="email"], input#email').count() > 0
+                                        ):
+                                            has_pass_prompt = True
+                                            break
+                                        await asyncio.sleep(0.5)
+
+                                    if has_pass_prompt:
+                                        sso_success = await handle_sso_password(popup)
+                                    else:
+                                        if not getattr(popup, "is_closed", lambda: False)():
+                                            pop_url = getattr(popup, "url", "").lower()
+                                            has_checkpoint = (
+                                                "checkpoint" in pop_url
+                                                or await popup.locator('input[name="approvals_code"]').count() > 0
+                                            )
+                                            if has_checkpoint:
+                                                logger.warning("Popup SSO chuyển sang trang checkpoint/2FA. Đóng popup.")
+                                                sso_success = False
+                                            else:
+                                                sso_success = True
+                                            try:
+                                                await popup.close()
+                                            except Exception:
+                                                pass
+                                        else:
+                                            sso_success = True
+                    except Exception as e_pop:
+                        logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
+
+                elif redirect_task in done and not redirect_task.cancelled() and redirect_task.exception() is None:
+                    res_nav = redirect_task.result()
+                    if res_nav is True:
+                        logger.info("Trang chính đã tự chuyển hướng thành công mà không cần popup: %s", page.url[:80])
+                        sso_success = True
+                    elif res_nav == "inline_form":
+                        logger.info("Nút SSO mở ra form đăng nhập inline trên trang. Đang tự động nạp thông tin đăng nhập...")
+                        fb_email = os.environ.get("FB_EMAIL", "").strip().strip('"').strip("'")
+                        fb_password = os.environ.get("FB_PASSWORD", "").strip().strip('"').strip("'")
+                        if fb_password:
+                            inline_ok = await submit_credentials_on_page(page, fb_email, fb_password)
+                            if inline_ok:
+                                for _ in range(8):
+                                    await asyncio.sleep(0.5)
+                                    c_p = urllib.parse.urlparse(page.url).path.lower()
+                                    if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
+                                        sso_success = True
+                                        break
+            except Exception as e_click:
+                err_msg = str(e_click)
+                pw = os.environ.get("FB_PASSWORD", "").strip().strip('"').strip("'")
+                em = os.environ.get("FB_EMAIL", "").strip().strip('"').strip("'")
+                for s in (pw, em):
+                    if s and s in err_msg:
+                        err_msg = err_msg.replace(s, "[REDACTED]")
+                logger.debug("Lỗi bấm nút SSO: %s", err_msg)
+            finally:
+                try:
+                    page.context.remove_listener("page", on_sso_page)
+                except Exception:
+                    pass
+
+            cur_p = urllib.parse.urlparse(page.url).path.lower()
+            if "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p:
+                sso_success = True
+            break
+
+    if clicked and sso_success:
+        try:
+            for _ in range(8):
+                await asyncio.sleep(0.5)
+                cur_p = urllib.parse.urlparse(page.url).path.lower()
+                if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
+                    break
+            cur_parsed = urllib.parse.urlparse(page.url)
+            cur_p = cur_parsed.path.lower()
+            cur_host = cur_parsed.netloc.lower()
+            if (
+                "/business/loginpage" in cur_p
+                or cur_p.startswith("/login")
+                or "business.facebook.com" not in cur_host
+                or not cur_p.startswith("/latest/")
+            ):
+                await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
+            await human_sleep(1.0, 2.0)
+        except Exception as e_nav:
+            logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
+
+    cur_p = urllib.parse.urlparse(page.url).path.lower()
+    return "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p
+
+
 async def verify_logged_in(page: Page) -> bool:
     """
     Kiểm tra xem trình duyệt đã đăng nhập vào Meta Business Suite chưa.
@@ -838,338 +1211,7 @@ async def verify_logged_in(page: Page) -> bool:
             'div:has-text("Log in with Facebook")',
         ]
 
-        clicked = False
-        sso_success = False
-        for sel in sso_selectors:
-            loc = page.locator(sel).first
-            if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
-                logger.info("Bấm nút bắc cầu phiên Facebook sang Meta: %s", sel)
-                popup_future = asyncio.get_event_loop().create_future()
-                def on_sso_page(new_p):
-                    if not popup_future.done():
-                        popup_future.set_result(new_p)
-
-                page.context.on("page", on_sso_page)
-                try:
-                    await loc.click(timeout=5000, force=True)
-                    clicked = True
-
-                    # XỬ LÝ SONG SONG: Chờ popup HOẶC chờ trang chính chuyển hướng (tránh timeout vô ích trên Headless VPS)
-                    async def wait_popup():
-                        return await popup_future
-
-                    async def watch_main_page_nav():
-                        while True:
-                            await asyncio.sleep(0.4)
-                            c_p = urllib.parse.urlparse(page.url).path.lower()
-                            if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
-                                return True
-                            try:
-                                if await page.locator('input[name="pass"], input[type="password"]').count() > 0:
-                                    return "inline_form"
-                            except Exception:
-                                pass
-
-                    popup_task = asyncio.create_task(wait_popup())
-                    redirect_task = asyncio.create_task(watch_main_page_nav())
-
-                    done, pending = await asyncio.wait(
-                        [popup_task, redirect_task],
-                        timeout=15.0,
-                        return_when=asyncio.FIRST_COMPLETED,
-                    )
-
-                    for p in pending:
-                        p.cancel()
-
-                    if popup_task in done and not popup_task.cancelled() and popup_task.exception() is None:
-                        try:
-                            popup = popup_task.result()
-                            load_state_fn = getattr(popup, "wait_for_load_state", None)
-                            if callable(load_state_fn):
-                                ls_res = load_state_fn("domcontentloaded")
-                                if asyncio.iscoroutine(ls_res) or hasattr(ls_res, "__await__"):
-                                    await ls_res
-                            await asyncio.sleep(0.3)
-
-                            # Hàm an toàn xử lý xác thực mật khẩu SSO (Bảo mật 100%, không rò rỉ secret)
-                            async def handle_sso_password(p_target) -> bool:
-                                fb_password = os.environ.get("FB_PASSWORD", "").strip()
-                                if (fb_password.startswith('"') and fb_password.endswith('"')) or (
-                                    fb_password.startswith("'") and fb_password.endswith("'")
-                                ):
-                                    fb_password = fb_password[1:-1].strip()
-
-                                fb_email = os.environ.get("FB_EMAIL", "").strip()
-                                if (fb_email.startswith('"') and fb_email.endswith('"')) or (
-                                    fb_email.startswith("'") and fb_email.endswith("'")
-                                ):
-                                    fb_email = fb_email[1:-1].strip()
-
-                                if not fb_password:
-                                    logger.warning(
-                                        "Popup SSO yêu cầu nhập mật khẩu thủ công nhưng biến môi trường FB_PASSWORD chưa được cấu hình. "
-                                        "Đóng popup để không chặn vòng quét."
-                                    )
-                                    try:
-                                        await p_target.close()
-                                    except Exception:
-                                        pass
-                                    return False
-
-                                logger.info("Popup SSO yêu cầu xác nhận mật khẩu. Đang tự động nạp mật khẩu an toàn từ biến môi trường...")
-                                try:
-                                    # Nếu popup có ô email (inline login trong popup)
-                                    if fb_email:
-                                        try:
-                                            em_loc = p_target.locator('input[name="email"], input[type="email"], input#email').first
-                                            if await em_loc.count() > 0:
-                                                await em_loc.fill(fb_email)
-                                                await asyncio.sleep(0.3)
-                                        except Exception:
-                                            pass
-
-                                    p_input = p_target.locator('input[name="pass"], input[type="password"]').first
-                                    await p_input.fill(fb_password)
-                                    await asyncio.sleep(0.3)
-
-                                    pop_login_sel = (
-                                        'button[type="submit"], '
-                                        'button[name="login"], '
-                                        'button[name="__CONFIRM__"], '
-                                        'input[type="submit"], '
-                                        'div[role="button"][aria-label="Đăng nhập"], '
-                                        'div[role="button"]:has-text("Đăng nhập"), '
-                                        'button:has-text("Đăng nhập"), '
-                                        'div[role="button"]:has-text("Log In"), '
-                                        'div[role="button"]:has-text("Log in"), '
-                                        'button:has-text("Log In"), '
-                                        'button:has-text("Log in"), '
-                                        'div[role="button"]:has-text("Xác nhận"), '
-                                        'button:has-text("Xác nhận"), '
-                                        'div[role="button"]:has-text("Confirm"), '
-                                        'button:has-text("Confirm")'
-                                    )
-                                    sub_btn = p_target.locator(pop_login_sel).first
-                                    sub_count = await _safe_eval_count(sub_btn)
-                                    if sub_count == 0:
-                                        sub_btn = p_target.locator(
-                                            'div[role="button"]:has-text("Tiếp tục"), '
-                                            'button:has-text("Tiếp tục"), '
-                                            'div[role="button"]:has-text("Continue"), '
-                                            'button:has-text("Continue")'
-                                        ).first
-                                        sub_count = await _safe_eval_count(sub_btn)
-
-                                    if sub_count > 0:
-                                        try:
-                                            await sub_btn.click(timeout=4000, force=True)
-                                        except Exception:
-                                            await p_input.press("Enter")
-                                    else:
-                                        await p_input.press("Enter")
-
-                                    # Chờ popup xử lý và đóng lại sau khi gửi mật khẩu (tối đa 12s)
-                                    try:
-                                        await p_target.wait_for_event("close", timeout=12000)
-                                        logger.info("Popup SSO xác nhận mật khẩu thành công và đã tự đóng.")
-                                        return True
-                                    except Exception:
-                                        if not getattr(p_target, "is_closed", lambda: False)():
-                                            # Nếu form chưa submit, thử gửi phím Enter dự phòng
-                                            rem_pass = await p_target.locator('input[name="pass"], input[type="password"]').count()
-                                            if rem_pass > 0:
-                                                try:
-                                                    await p_input.press("Enter")
-                                                    await asyncio.sleep(2.0)
-                                                except Exception:
-                                                    pass
-
-                                            if getattr(p_target, "is_closed", lambda: False)():
-                                                logger.info("Popup SSO đã hoàn tất xác nhận mật khẩu và tự đóng.")
-                                                return True
-
-                                            pop_url = getattr(p_target, "url", "").lower()
-                                            rem_pass_after = await p_target.locator('input[name="pass"], input[type="password"]').count()
-                                            has_checkpoint = (
-                                                "checkpoint" in pop_url
-                                                or await p_target.locator('input[name="approvals_code"]').count() > 0
-                                            )
-                                            if rem_pass_after > 0 or has_checkpoint:
-                                                logger.warning(
-                                                    "Popup SSO xác nhận mật khẩu không thành công (mật khẩu không đúng hoặc gặp checkpoint/2FA). Đóng popup."
-                                                )
-                                                try:
-                                                    await p_target.close()
-                                                except Exception:
-                                                    pass
-                                                return False
-                                            else:
-                                                logger.info("Popup SSO đã hoàn tất xác nhận mật khẩu.")
-                                                try:
-                                                    await p_target.close()
-                                                except Exception:
-                                                    pass
-                                                return True
-                                        return True
-                                except Exception as e_pw:
-                                    err_msg = str(e_pw)
-                                    if fb_password and fb_password in err_msg:
-                                        err_msg = err_msg.replace(fb_password, "[REDACTED_PASSWORD]")
-                                    if fb_email and fb_email in err_msg:
-                                        err_msg = err_msg.replace(fb_email, "[REDACTED_EMAIL]")
-                                    logger.warning("Lỗi trong quá trình tự động xác thực mật khẩu SSO: %s", err_msg)
-                                    try:
-                                        await p_target.close()
-                                    except Exception:
-                                        pass
-                                    return False
-
-                            # 1. Kiểm tra nếu popup hiển thị ô nhập mật khẩu hoặc email ngay khi mở
-                            is_cl = getattr(popup, "is_closed", lambda: False)()
-                            if not is_cl:
-                                pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
-                                email_count = await popup.locator('input[name="email"], input[type="email"], input#email').count()
-                                if pass_count > 0 or email_count > 0:
-                                    sso_success = await handle_sso_password(popup)
-                                else:
-                                    # Bấm nút 'Tiếp tục' hoặc profile người dùng trong popup
-                                    p_btn = popup.locator(
-                                        'div[role="button"]:has-text("Tiếp tục"), '
-                                        'button:has-text("Tiếp tục"), '
-                                        'a[role="button"]:has-text("Tiếp tục"), '
-                                        '[aria-label*="Tiếp tục"], '
-                                        'div[role="button"]:has-text("Đức Trí"), '
-                                        'button:has-text("Đức Trí"), '
-                                        '[aria-label*="Đức Trí"], '
-                                        'button[name="__CONFIRM__"], '
-                                        'button[name="login"], '
-                                        'input[type="submit"], '
-                                        'div[role="button"]:has-text("Continue"), '
-                                        'button:has-text("Continue"), '
-                                        'a[role="button"]:has-text("Continue"), '
-                                        '[aria-label*="Continue"]'
-                                    ).first
-                                    p_count = await p_btn.count() if hasattr(p_btn, "count") else 0
-                                    if p_count > 0:
-                                        await p_btn.click(timeout=4000, force=True)
-                                    else:
-                                        txt_loc = popup.locator(
-                                            '[role="button"]:has-text("Tiếp tục"), '
-                                            'button:has-text("Tiếp tục"), '
-                                            '[role="button"]:has-text("Continue"), '
-                                            'button:has-text("Continue")'
-                                        ).first
-                                        if hasattr(txt_loc, "count") and await txt_loc.count() > 0:
-                                            await txt_loc.click(timeout=4000, force=True)
-
-                                    await asyncio.sleep(0.3)
-                                    # Chờ popup đóng lại (thành công) HOẶC xuất hiện ô nhập mật khẩu
-                                    if not getattr(popup, "is_closed", lambda: False)():
-                                        has_pass_prompt = False
-                                        for _ in range(20):  # Tối đa 10s (mỗi 0.5s)
-                                            if getattr(popup, "is_closed", lambda: False)():
-                                                break
-                                            if (
-                                                await popup.locator('input[name="pass"], input[type="password"]').count() > 0
-                                                or await popup.locator('input[name="email"], input[type="email"], input#email').count() > 0
-                                            ):
-                                                has_pass_prompt = True
-                                                break
-                                            await asyncio.sleep(0.5)
-
-                                        if has_pass_prompt:
-                                            sso_success = await handle_sso_password(popup)
-                                        else:
-                                            if not getattr(popup, "is_closed", lambda: False)():
-                                                pop_url = getattr(popup, "url", "").lower()
-                                                has_checkpoint = (
-                                                    "checkpoint" in pop_url
-                                                    or await popup.locator('input[name="approvals_code"]').count() > 0
-                                                )
-                                                if has_checkpoint:
-                                                    logger.warning("Popup SSO chuyển sang trang checkpoint/2FA. Đóng popup.")
-                                                    sso_success = False
-                                                else:
-                                                    sso_success = True
-                                                try:
-                                                    await popup.close()
-                                                except Exception:
-                                                    pass
-                                            else:
-                                                sso_success = True
-                        except Exception as e_pop:
-                            logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
-
-                    elif redirect_task in done and not redirect_task.cancelled() and redirect_task.exception() is None:
-                        res_nav = redirect_task.result()
-                        if res_nav is True:
-                            logger.info("Trang chính đã tự chuyển hướng thành công mà không cần popup: %s", page.url[:80])
-                            sso_success = True
-                        elif res_nav == "inline_form":
-                            logger.info("Nút SSO mở ra form đăng nhập inline trên trang. Đang tự động nạp thông tin đăng nhập...")
-                            fb_email = os.environ.get("FB_EMAIL", "").strip()
-                            if (fb_email.startswith('"') and fb_email.endswith('"')) or (
-                                fb_email.startswith("'") and fb_email.endswith("'")
-                            ):
-                                fb_email = fb_email[1:-1].strip()
-
-                            fb_password = os.environ.get("FB_PASSWORD", "").strip()
-                            if (fb_password.startswith('"') and fb_password.endswith('"')) or (
-                                fb_password.startswith("'") and fb_password.endswith("'")
-                            ):
-                                fb_password = fb_password[1:-1].strip()
-
-                            if fb_password:
-                                inline_ok = await submit_credentials_on_page(page, fb_email, fb_password)
-                                if inline_ok:
-                                    for _ in range(8):
-                                        await asyncio.sleep(0.5)
-                                        c_p = urllib.parse.urlparse(page.url).path.lower()
-                                        if "/business/loginpage" not in c_p and not c_p.startswith("/login") and "checkpoint" not in c_p:
-                                            sso_success = True
-                                            break
-
-                except Exception as e_click:
-                    err_msg = str(e_click)
-                    pw = os.environ.get("FB_PASSWORD", "").strip().strip('"').strip("'")
-                    em = os.environ.get("FB_EMAIL", "").strip().strip('"').strip("'")
-                    for s in (pw, em):
-                        if s and s in err_msg:
-                            err_msg = err_msg.replace(s, "[REDACTED]")
-                    logger.debug("Lỗi bấm nút SSO: %s", err_msg)
-                finally:
-                    try:
-                        page.context.remove_listener("page", on_sso_page)
-                    except Exception:
-                        pass
-
-                cur_p = urllib.parse.urlparse(page.url).path.lower()
-                if "/business/loginpage" not in cur_p and not cur_p.startswith("/login") and "checkpoint" not in cur_p:
-                    sso_success = True
-                break
-
-        if clicked and sso_success:
-            # Chờ trang chính tự chuyển hướng hoặc chủ động điều hướng tới URL inbox mục tiêu
-            try:
-                for _ in range(6):
-                    await asyncio.sleep(0.5)
-                    cur_p = urllib.parse.urlparse(page.url).path.lower()
-                    if "/business/loginpage" not in cur_p and not cur_p.startswith("/login"):
-                        break
-                cur_parsed = urllib.parse.urlparse(page.url)
-                cur_p = cur_parsed.path.lower()
-                cur_host = cur_parsed.netloc.lower()
-                if (
-                    "/business/loginpage" in cur_p
-                    or cur_p.startswith("/login")
-                    or "business.facebook.com" not in cur_host
-                    or not cur_p.startswith("/latest/")
-                ):
-                    await page.goto(META_INBOX_COMMENTS_URL, wait_until="domcontentloaded", timeout=30000)
-                await human_sleep(1.0, 2.0)
-            except Exception as e_nav:
-                logger.debug("Lỗi điều hướng trang chính sau SSO: %s", e_nav)
+        await attempt_sso_bridge_on_page(page, sso_selectors)
 
 
         # BỔ SUNG CƠ CHẾ KÍCH HOẠT PHIÊN:
@@ -1200,14 +1242,8 @@ async def verify_logged_in(page: Page) -> bool:
 
                     cur_p = urllib.parse.urlparse(page.url).path.lower()
                     if "/business/loginpage" in cur_p or cur_p.startswith("/login"):
-                        for sel in sso_selectors:
-                            base_loc = page.locator(sel)
-                            loc = base_loc.last if sel.startswith("div:has-text(") and hasattr(base_loc, "last") else base_loc.first
-                            if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
-                                logger.info("Bấm nút SSO lần 2 sau khi đồng bộ session: %s", sel)
-                                await loc.click(timeout=5000, force=True)
-                                await human_sleep(2.0, 3.5)
-                                break
+                        logger.info("Thử bấm nút SSO lần 2 sau khi đồng bộ session: %s", page.url[:80])
+                        await attempt_sso_bridge_on_page(page, sso_selectors)
             except Exception as e_auth_check:
                 logger.debug("Lỗi kiểm tra auth cookies: %s", e_auth_check)
 
@@ -1438,18 +1474,8 @@ async def verify_logged_in(page: Page) -> bool:
 
                                 c_p = urllib.parse.urlparse(page.url).path.lower()
                                 if "/business/loginpage" in c_p or c_p.startswith("/login"):
-                                    for sel in sso_selectors:
-                                        base_loc = page.locator(sel)
-                                        loc = base_loc.last if sel.startswith("div:has-text(") and hasattr(base_loc, "last") else base_loc.first
-                                        if await _safe_eval_count(loc) > 0 and await _safe_eval_visible(loc):
-                                            logger.info("Bấm nút SSO bắc cầu phiên sau khi đã tái đăng nhập: %s", sel)
-                                            await loc.click(timeout=5000, force=True)
-                                            for _ in range(10):
-                                                await asyncio.sleep(0.5)
-                                                c_p = urllib.parse.urlparse(page.url).path.lower()
-                                                if "/business/loginpage" not in c_p and not c_p.startswith("/login"):
-                                                    break
-                                            break
+                                    logger.info("Bấm nút SSO bắc cầu phiên sau khi đã tái đăng nhập: %s", page.url[:80])
+                                    await attempt_sso_bridge_on_page(page, sso_selectors)
                         except Exception as e_reauth:
                             err_str = str(e_reauth)
                             for s in (fb_password, fb_email):
