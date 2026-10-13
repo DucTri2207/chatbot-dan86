@@ -541,6 +541,51 @@ def export_github_secret_file(
         return ""
 
 
+def sync_storage_secret_to_github(
+    secret_path: str = GITHUB_SECRET_EXPORT_FILE,
+) -> bool:
+    """
+    Tự động cập nhật Secret FB_STORAGE_STATE lên GitHub repo thông qua GitHub CLI (gh)
+    nếu môi trường có cấu hình GH_TOKEN hoặc GITHUB_TOKEN và công cụ gh sẵn sàng.
+    Đảm bảo an toàn 100%: không in/log nội dung secret ra màn hình hoặc log.
+    """
+    if not os.path.exists(secret_path):
+        return False
+    try:
+        import shutil
+        import subprocess
+
+        if not shutil.which("gh"):
+            return False
+
+        with open(secret_path, "r", encoding="utf-8") as f:
+            b64_content = f.read().strip()
+        if not b64_content:
+            return False
+
+        cmd = ["gh", "secret", "set", "FB_STORAGE_STATE"]
+        repo = os.environ.get("GITHUB_REPOSITORY")
+        if repo:
+            cmd.extend(["--repo", repo])
+
+        res = subprocess.run(
+            cmd,
+            input=b64_content,
+            text=True,
+            capture_output=True,
+            timeout=25,
+        )
+        if res.returncode == 0:
+            logger.info("Đã tự động nạp phiên mới FB_STORAGE_STATE lên GitHub Secrets thành công qua gh CLI.")
+            return True
+        else:
+            logger.debug("Không thể cập nhật GitHub Secrets qua gh CLI (thiếu quyền hoặc token hạn chế): %s", res.stderr.strip()[:200])
+            return False
+    except Exception as e:
+        logger.debug("Lỗi cập nhật GitHub Secret qua gh CLI: %s", e)
+        return False
+
+
 def get_storage_state_status() -> Dict[str, Any]:
     """Kiểm tra tình trạng file fb_storage_state.json hiện tại."""
     if not os.path.exists(STORAGE_STATE_FILE):

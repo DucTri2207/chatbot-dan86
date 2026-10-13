@@ -1,4 +1,5 @@
 import asyncio
+import os
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 from bot.page_bot_engine import verify_logged_in
@@ -292,6 +293,186 @@ class TestVerifyLoggedIn(unittest.IsolatedAsyncioTestCase):
 
         res = await verify_logged_in(mock_page)
         self.assertFalse(res)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    @patch("bot.auth_helper.export_github_secret_file")
+    @patch("bot.auth_helper.sync_storage_secret_to_github")
+    async def test_popup_requires_password_with_fb_password_fills_and_succeeds(
+        self, mock_sync, mock_export, mock_sleep
+    ):
+        """
+        Khi SSO popup yêu cầu xác nhận mật khẩu và FB_PASSWORD có trong môi trường:
+        - Tự động điền mật khẩu mà KHÔNG log mật khẩu
+        - Nhấn xác nhận
+        - Popup tự đóng
+        - Chuyển hướng vào Inbox thành công và trả về True
+        """
+        with patch.dict(os.environ, {"FB_PASSWORD": "SecretPassword123!"}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+            mock_page.context.storage_state = AsyncMock()
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'div:has-text("Tiếp tục bằng Facebook")' in sel:
+                    is_login = "/business/loginpage" in mock_page.url
+                    mock.first.count.return_value = 1 if is_login else 0
+                    mock.first.is_visible.return_value = is_login
+                    mock.first.click = AsyncMock()
+                elif '[role="navigation"]' in sel or 'div._a6ag._a6ah' in sel:
+                    is_inbox = "/latest/inbox" in mock_page.url
+                    mock.first.count.return_value = 1 if is_inbox else 0
+                    mock.first.is_visible.return_value = is_inbox
+                    mock.count.return_value = 1 if is_inbox else 0
+                elif 'input[name="email"]' in sel:
+                    mock.count.return_value = 0
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            # Mock popup
+            mock_popup = MagicMock()
+            mock_popup.is_closed.return_value = False
+            mock_popup.wait_for_load_state = AsyncMock()
+            mock_popup.wait_for_event = AsyncMock()
+            mock_popup.close = AsyncMock()
+
+            pass_input_mock = AsyncMock()
+            confirm_btn_mock = AsyncMock()
+
+            def popup_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'button[type="submit"]' in sel or 'button[name="login"]' in sel or '__CONFIRM__' in sel:
+                    mock.count.return_value = 1
+                    mock.first = confirm_btn_mock
+                    confirm_btn_mock.count = AsyncMock(return_value=1)
+                elif 'Tiếp tục' in sel:
+                    mock.first.count.return_value = 1
+                    mock.first.click = AsyncMock()
+                elif 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = pass_input_mock
+                else:
+                    mock.first.count.return_value = 0
+                    mock.count.return_value = 0
+                return mock
+
+            mock_popup.locator.side_effect = popup_locator_side_effect
+
+            def on_page_listener(event, cb):
+                cb(mock_popup)
+
+            mock_page.context.on.side_effect = on_page_listener
+
+            async def fake_goto(url, **kwargs):
+                mock_page.url = url
+
+            mock_page.goto = AsyncMock(side_effect=fake_goto)
+
+            with self.assertLogs("dan86_page_bot", level="INFO") as log_capture:
+                res = await verify_logged_in(mock_page)
+
+            self.assertTrue(res)
+            pass_input_mock.fill.assert_awaited_with("SecretPassword123!")
+            confirm_btn_mock.click.assert_awaited()
+            mock_export.assert_called_once()
+            mock_sync.assert_called_once()
+
+            # BẢO MẬT 100%: Tuyệt đối không log chuỗi mật khẩu
+            all_logs = " ".join(log_capture.output)
+            self.assertNotIn("SecretPassword123!", all_logs)
+
+    @patch("bot.page_bot_engine.human_sleep", new_callable=AsyncMock)
+    async def test_popup_password_fill_exception_handles_gracefully(self, mock_sleep):
+        """Khi quá trình điền mật khẩu gặp ngoại lệ, bot không bị crash và đóng popup an toàn."""
+        with patch.dict(os.environ, {"FB_PASSWORD": "SecretPassword123!"}):
+            mock_page = MagicMock()
+            mock_page.url = "https://business.facebook.com/business/loginpage/?next=..."
+            mock_page.context = MagicMock()
+
+            def page_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'div:has-text("Tiếp tục bằng Facebook")' in sel:
+                    mock.first.count.return_value = 1
+                    mock.first.is_visible.return_value = True
+                    mock.first.click = AsyncMock()
+                else:
+                    mock.first.count.return_value = 0
+                    mock.first.is_visible.return_value = False
+                    mock.count.return_value = 0
+                return mock
+
+            mock_page.locator.side_effect = page_locator_side_effect
+
+            mock_popup = MagicMock()
+            mock_popup.is_closed.return_value = False
+            mock_popup.wait_for_load_state = AsyncMock()
+            mock_popup.close = AsyncMock()
+
+            pass_input_mock = AsyncMock()
+            pass_input_mock.fill.side_effect = RuntimeError("Element detached from DOM")
+
+            def popup_locator_side_effect(sel):
+                mock = AsyncMock()
+                if 'input[name="pass"]' in sel:
+                    mock.count.return_value = 1
+                    mock.first = pass_input_mock
+                else:
+                    mock.first.count.return_value = 0
+                    mock.count.return_value = 0
+                return mock
+
+            mock_popup.locator.side_effect = popup_locator_side_effect
+
+            def on_page_listener(event, cb):
+                cb(mock_popup)
+
+            mock_page.context.on.side_effect = on_page_listener
+
+            res = await verify_logged_in(mock_page)
+            self.assertFalse(res)
+            mock_popup.close.assert_awaited()
+
+
+class TestSyncStorageSecretToGithub(unittest.TestCase):
+
+    @patch("os.path.exists", return_value=False)
+    def test_sync_file_not_found_returns_false(self, mock_exists):
+        from bot.auth_helper import sync_storage_secret_to_github
+        res = sync_storage_secret_to_github("nonexistent_file.txt")
+        self.assertFalse(res)
+
+    @patch("os.path.exists", return_value=True)
+    @patch("shutil.which", return_value=None)
+    def test_sync_gh_not_installed_returns_false(self, mock_which, mock_exists):
+        from bot.auth_helper import sync_storage_secret_to_github
+        res = sync_storage_secret_to_github("state/GITHUB_SECRET_VALUE.txt")
+        self.assertFalse(res)
+
+    @patch("os.path.exists", return_value=True)
+    @patch("shutil.which", return_value="/usr/bin/gh")
+    @patch("builtins.open")
+    @patch("subprocess.run")
+    def test_sync_success(self, mock_run, mock_open_file, mock_which, mock_exists):
+        from bot.auth_helper import sync_storage_secret_to_github
+        mock_file = MagicMock()
+        mock_file.__enter__.return_value.read.return_value = "eyJjb29raWVzIjpbXX0="
+        mock_open_file.return_value = mock_file
+
+        mock_run.return_value = MagicMock(returncode=0, stdout="", stderr="")
+
+        res = sync_storage_secret_to_github("state/GITHUB_SECRET_VALUE.txt")
+        self.assertTrue(res)
+        mock_run.assert_called_once()
+        cmd_called = mock_run.call_args[0][0]
+        self.assertEqual(cmd_called[:4], ["gh", "secret", "set", "FB_STORAGE_STATE"])
+        # Verify secret content was passed via input and not logged in cmd
+        self.assertEqual(mock_run.call_args[1]["input"], "eyJjb29raWVzIjpbXX0=")
 
 
 if __name__ == "__main__":

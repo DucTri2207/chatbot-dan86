@@ -318,6 +318,12 @@ async def run_bot_loop(
                                 json.dump(new_data, f_fix, ensure_ascii=False, indent=2)
                         except Exception:
                             pass
+                    try:
+                        from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
+                        export_github_secret_file(STORAGE_STATE_FILE)
+                        sync_storage_secret_to_github()
+                    except Exception:
+                        pass
             except Exception:
                 pass
             await context.close()

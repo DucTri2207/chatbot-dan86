@@ -688,52 +688,132 @@ async def verify_logged_in(page: Page) -> bool:
                                     await ls_res
                             await asyncio.sleep(0.3)
 
-                            # Bấm nút 'Tiếp tục' trong popup
-                            p_btn = popup.locator(
-                                'div[role="button"]:has-text("Tiếp tục"), '
-                                'button:has-text("Tiếp tục"), '
-                                'div:has-text("Tiếp tục"), '
-                                'a:has-text("Tiếp tục"), '
-                                '[aria-label*="Tiếp tục"], '
-                                'button[name="__CONFIRM__"], '
-                                'div[role="button"]:has-text("Continue"), '
-                                'button:has-text("Continue")'
-                            ).first
-                            p_count = await p_btn.count() if hasattr(p_btn, "count") else 0
-                            if p_count > 0:
-                                await p_btn.click(force=True)
-                            else:
-                                txt_loc = popup.locator('text="Tiếp tục"').first
-                                if hasattr(txt_loc, "count") and await txt_loc.count() > 0:
-                                    await txt_loc.click(force=True)
+                            # Hàm an toàn xử lý xác thực mật khẩu SSO
+                            async def handle_sso_password(p_target) -> bool:
+                                fb_password = os.environ.get("FB_PASSWORD", "").strip()
+                                if not fb_password:
+                                    logger.warning("Popup SSO yêu cầu nhập mật khẩu thủ công nhưng biến môi trường FB_PASSWORD chưa được cấu hình. Đóng popup để không chặn vòng quét.")
+                                    try:
+                                        await p_target.close()
+                                    except Exception:
+                                        pass
+                                    return False
 
-                            await asyncio.sleep(0.3)
-                            # Kiểm tra xem popup có đòi mật khẩu thủ công không
+                                logger.info("Popup SSO yêu cầu xác nhận mật khẩu. Đang tự động nạp mật khẩu an toàn từ biến môi trường...")
+                                try:
+                                    p_input = p_target.locator('input[name="pass"], input[type="password"]').first
+                                    await p_input.fill(fb_password)
+                                    await asyncio.sleep(0.3)
+
+                                    sub_btn = p_target.locator(
+                                        'button[type="submit"], '
+                                        'button[name="login"], '
+                                        'button[name="__CONFIRM__"], '
+                                        'div[role="button"]:has-text("Tiếp tục"), '
+                                        'button:has-text("Tiếp tục"), '
+                                        'div[role="button"]:has-text("Xác nhận"), '
+                                        'button:has-text("Xác nhận"), '
+                                        'button:has-text("Đăng nhập"), '
+                                        'div[role="button"]:has-text("Continue"), '
+                                        'button:has-text("Continue"), '
+                                        'div[role="button"]:has-text("Confirm"), '
+                                        'button:has-text("Confirm")'
+                                    ).first
+                                    sub_count = await sub_btn.count() if hasattr(sub_btn, "count") else 0
+                                    if sub_count > 0:
+                                        await sub_btn.click(force=True)
+                                    else:
+                                        await p_input.press("Enter")
+
+                                    # Chờ popup xử lý và đóng lại sau khi gửi mật khẩu (tối đa 10s)
+                                    try:
+                                        await p_target.wait_for_event("close", timeout=10000)
+                                        logger.info("Popup SSO xác nhận mật khẩu thành công và đã tự đóng.")
+                                        return True
+                                    except Exception:
+                                        if not getattr(p_target, "is_closed", lambda: False)():
+                                            rem_pass = await p_target.locator('input[name="pass"], input[type="password"]').count()
+                                            if rem_pass > 0:
+                                                logger.warning("Popup SSO xác nhận mật khẩu không thành công (mật khẩu không đúng hoặc gặp checkpoint). Đóng popup.")
+                                                try:
+                                                    await p_target.close()
+                                                except Exception:
+                                                    pass
+                                                return False
+                                            else:
+                                                logger.info("Popup SSO đã hoàn tất xác nhận mật khẩu.")
+                                                try:
+                                                    await p_target.close()
+                                                except Exception:
+                                                    pass
+                                                return True
+                                        return True
+                                except Exception as e_pw:
+                                    logger.warning("Lỗi trong quá trình tự động xác thực mật khẩu SSO: %s", e_pw)
+                                    try:
+                                        await p_target.close()
+                                    except Exception:
+                                        pass
+                                    return False
+
+                            # 1. Kiểm tra nếu popup hiển thị ô nhập mật khẩu ngay khi mở
                             is_cl = getattr(popup, "is_closed", lambda: False)()
                             if not is_cl:
                                 pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
                                 if pass_count > 0:
-                                    logger.warning("Popup SSO yêu cầu nhập mật khẩu thủ công (chưa có token một chạm hoạt động). Đóng popup để không chặn vòng quét.")
-                                    try:
-                                        await popup.close()
-                                    except Exception:
-                                        pass
-                                    sso_success = False
+                                    sso_success = await handle_sso_password(popup)
                                 else:
-                                    # Chờ tối đa 6s cho popup tự đóng hoặc chuyển hướng
-                                    try:
-                                        await popup.wait_for_event("close", timeout=6000)
-                                        sso_success = True
-                                    except Exception:
-                                        if not getattr(popup, "is_closed", lambda: False)():
-                                            pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
-                                            sso_success = (pass_count == 0)
-                                            try:
-                                                await popup.close()
-                                            except Exception:
-                                                pass
+                                    # Bấm nút 'Tiếp tục' trong popup
+                                    p_btn = popup.locator(
+                                        'div[role="button"]:has-text("Tiếp tục"), '
+                                        'button:has-text("Tiếp tục"), '
+                                        'div:has-text("Tiếp tục"), '
+                                        'a:has-text("Tiếp tục"), '
+                                        '[aria-label*="Tiếp tục"], '
+                                        'button[name="__CONFIRM__"], '
+                                        'div[role="button"]:has-text("Continue"), '
+                                        'button:has-text("Continue")'
+                                    ).first
+                                    p_count = await p_btn.count() if hasattr(p_btn, "count") else 0
+                                    if p_count > 0:
+                                        await p_btn.click(force=True)
+                                    else:
+                                        txt_loc = popup.locator('text="Tiếp tục"').first
+                                        if hasattr(txt_loc, "count") and await txt_loc.count() > 0:
+                                            await txt_loc.click(force=True)
+
+                                    await asyncio.sleep(0.3)
+                                    # Kiểm tra xem sau khi bấm 'Tiếp tục', popup có chuyển sang đòi mật khẩu không
+                                    if not getattr(popup, "is_closed", lambda: False)():
+                                        has_pass_prompt = False
+                                        for _ in range(5):
+                                            if getattr(popup, "is_closed", lambda: False)():
+                                                break
+                                            if await popup.locator('input[name="pass"], input[type="password"]').count() > 0:
+                                                has_pass_prompt = True
+                                                break
+                                            await asyncio.sleep(0.3)
+
+                                        if has_pass_prompt:
+                                            sso_success = await handle_sso_password(popup)
                                         else:
-                                            sso_success = True
+                                            # Chờ tối đa 6s cho popup tự đóng hoặc chuyển hướng
+                                            try:
+                                                await popup.wait_for_event("close", timeout=6000)
+                                                sso_success = True
+                                            except Exception:
+                                                if not getattr(popup, "is_closed", lambda: False)():
+                                                    pass_count = await popup.locator('input[name="pass"], input[type="password"]').count()
+                                                    if pass_count > 0:
+                                                        sso_success = await handle_sso_password(popup)
+                                                    else:
+                                                        sso_success = True
+                                                        try:
+                                                            await popup.close()
+                                                        except Exception:
+                                                            pass
+                                                else:
+                                                    sso_success = True
                         except Exception as e_pop:
                             logger.debug("Không mở popup SSO hoặc popup xử lý nội bộ: %s", e_pop)
 
@@ -845,7 +925,7 @@ async def verify_logged_in(page: Page) -> bool:
 
     # Lưu cố định toàn bộ cookies (gồm cả business.facebook.com) ngay sau khi xác thực/vào inbox thành công
     try:
-        from bot.auth_helper import export_github_secret_file
+        from bot.auth_helper import export_github_secret_file, sync_storage_secret_to_github
         # Bảo toàn origins (localStorage business.facebook.com) hiện có
         preserved_origins = []
         if os.path.exists(STORAGE_STATE_FILE):
@@ -876,6 +956,7 @@ async def verify_logged_in(page: Page) -> bool:
             pass
 
         export_github_secret_file(str(STORAGE_STATE_FILE))
+        sync_storage_secret_to_github()
         logger.info("Đã lưu cố định fb_storage_state.json và cập nhật GITHUB_SECRET_VALUE.txt thành công!")
     except Exception as e_save:
         logger.warning("Không thể lưu storage_state sau xác thực: %s", e_save)
