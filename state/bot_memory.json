@@ -401,6 +401,28 @@
       "post_id": "1158880666663964",
       "dom_index": 1,
       "inbox_attempts": 1
+    },
+    "cmt:1138139658738065:1:237da5152f7ac802": {
+      "author": "Nguyen Ngoc",
+      "comment_text": "Xin giá móc khoá Ngựa ạ",
+      "public_reply": "Dạ cảm ơn Nguyen Ngoc đã quan tâm đến Quà tặng thuần Việt DAN86! Shop đã chủ động gửi tin nhắn kèm hình ảnh thực tế cho mình rồi ạ. Bạn check hộp thư/tin nhắn chờ giúp shop nhé! 🎁",
+      "private_inbox_sent": true,
+      "private_reply_text": "Dạ DAN86 chào Nguyen Ngoc nhé! Shop thấy mình vừa bình luận trên bài viết của trang nên nhắn tin hỗ trợ mình ngay ạ. ❤️\nCác set quà bên em đều được làm thủ công tỉ mỉ từ mây tre đan, cỏ bàng kết hợp đặc sản thuần Việt, nhận thiết kế riêng và in logo theo yêu cầu.\n🌐 Mời bạn xem trọn bộ mẫu & bảng giá tại: https://dan86.vn\nDạ mình dự định đặt số lượng khoảng bao nhiêu set để bên em báo giá tốt nhất cho mình ạ?",
+      "replied_at": 1791895634.1369245,
+      "post_id": "1138139658738065",
+      "dom_index": 1,
+      "inbox_attempts": 1
+    },
+    "cmt:1132187092666655:4:412c7135e18f958e": {
+      "author": "Hoa Muongbien",
+      "comment_text": "Xin giá móc khóa",
+      "public_reply": "Dạ cảm ơn Hoa Muongbien đã để lại bình luận! Bên em vừa gửi mẫu kèm báo giá chi tiết vào hộp thư Messenger của mình rồi ạ. Bạn ghé kiểm tra tin nhắn giúp shop nha! ✨",
+      "private_inbox_sent": true,
+      "private_reply_text": "Chào Hoa Muongbien, DAN86 cảm ơn bạn đã để lại bình luận quan tâm đến sản phẩm! 🎁\nBên em chuyên các set quà tặng thuần Việt tinh tế, mây tre đan thủ công, nông sản và thảo mộc thiên nhiên phù hợp làm quà tặng dịp lễ, quà đối tác, doanh nghiệp.\n🌐 Xem toàn bộ các set quà tại website: https://dan86.vn\nDạ bạn đang quan tâm set quà ngân sách khoảng bao nhiêu để shop tư vấn mẫu phù hợp nhất cho mình ạ?",
+      "replied_at": 1791895756.429158,
+      "post_id": "1132187092666655",
+      "dom_index": 4,
+      "inbox_attempts": 1
     }
   },
   "conversations": {
@@ -507,8 +529,9 @@
       "customer_name": "Hoa Muongbien",
       "stage": 1,
       "last_replied_customer_msg": "khóa voi",
-      "last_bot_reply_ts": 1791784720.900896,
-      "source": "comment_private_reply"
+      "last_bot_reply_ts": 1791895756.429158,
+      "source": "comment_private_reply",
+      "last_interaction_ts": 1791898962.65385
     },
     "name:bach mai": {
       "customer_name": "Bach Mai",
@@ -561,7 +584,7 @@
       "stage": 1,
       "last_replied_customer_msg": "e xin giá ạ",
       "last_bot_reply_ts": 1791878872.384944,
-      "last_interaction_ts": 1791883071.2633681,
+      "last_interaction_ts": 1791898987.3908777,
       "source": "prior_history"
     },
     "name:thi thi": {
@@ -579,11 +602,26 @@
       "last_bot_reply_ts": 1791879548.4513013,
       "last_interaction_ts": 1791879548.4513013,
       "source": "prior_history"
+    },
+    "name:nguyen ngoc": {
+      "customer_name": "Nguyen Ngoc",
+      "stage": 1,
+      "last_replied_customer_msg": "xin giá móc khoá ngựa ạ",
+      "last_bot_reply_ts": 1791895634.1369245,
+      "source": "comment_private_reply"
+    },
+    "tid:100004444830032": {
+      "customer_name": "Thuy Trang Phan Le",
+      "stage": 1,
+      "last_replied_customer_msg": "có nón thổ cẩm o e",
+      "last_bot_reply_ts": 1791895805.726113,
+      "last_interaction_ts": 1791895805.726113,
+      "source": "prior_history"
     }
   },
   "stats": {
-    "comments_replied": 45,
-    "private_inboxes_from_comment": 26,
+    "comments_replied": 47,
+    "private_inboxes_from_comment": 28,
     "first_inbox_replies": 0,
     "wait_staff_replies": 1
   }
